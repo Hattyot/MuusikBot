@@ -1,0 +1,7 @@
+discord[voice]
+discord
+wavelink
+pymongo
+youtube_dl
+youtube_search
+psutil
