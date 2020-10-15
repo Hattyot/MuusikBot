@@ -110,7 +110,7 @@ class Playlist:
             songs_data = await self.wavelink.get_tracks(f'ytsearch:{query}', retry_on_failure=True)
 
             if not songs_data:
-                return f"Couldn't find anything by: {query}"
+                return f"Couldn't find any matches for: {query}"
 
             song = songs_data[0]
 
@@ -273,7 +273,9 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
             if error:
                 return
 
-        return await playlist.process_song(song_request, ctx.author.id)
+        error = await playlist.process_song(song_request, ctx.author.id)
+        if type(error) == str:
+            return await embed_maker.message(ctx, error, colour='red')
 
     @commands.command(help='pause the bot', usage='pause', clearance='User', examples=['pause'], cls=command.Command)
     async def pause(self, ctx):
