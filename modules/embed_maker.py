@@ -11,7 +11,7 @@ def get_colour(colour):
     }.get(colour, config.EMBED_COLOUR)
 
 
-async def message(ctx, msg, *, title=None, footer=None, colour=None, timestamp=datetime.now()):
+async def message(ctx, msg, *, title=None, footer=None, colour=None, timestamp=datetime.now(), nonce=None):
     embed_colour = config.EMBED_COLOUR if colour is None else get_colour(colour)
 
     embed = discord.Embed(colour=embed_colour, description=msg)
@@ -24,7 +24,7 @@ async def message(ctx, msg, *, title=None, footer=None, colour=None, timestamp=d
     if timestamp:
         embed.timestamp = timestamp
 
-    return await ctx.send(embed=embed)
+    return await ctx.send(embed=embed, nonce=nonce)
 
 
 async def command_error(ctx, bad_arg=None, extra_text=''):

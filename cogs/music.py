@@ -3,6 +3,7 @@ import random
 import time
 import math
 import wavelink
+import asyncio
 from config import EMBED_COLOUR
 from discord.ext import commands
 from modules import embed_maker, command, format_time, database
@@ -54,6 +55,7 @@ class Playlist:
             if current_song:
                 formatted_duration = format_time.ms(current_song.duration, accuracy=3)
                 currently_playing_str = f'[{current_song.title}](http://y2u.be/{current_song.ytid}) | `{formatted_duration}` - <@{current_song.info["requester"]}>'
+                currently_playing_str += '0m 00s '
             else:
                 currently_playing_str = '\u200b'
 
@@ -277,6 +279,48 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         if type(error) == str:
             return await embed_maker.message(ctx, error, colour='red')
 
+    @commands.command(help='search for a song', usage='search [query]', examples=['search jack stauber'], clearance='User', cls=command.Command)
+    async def search(self, ctx, *, query=None):
+        if query is None:
+            return await embed_maker.command_error(ctx)
+
+        playlist = self.bot.playlists[ctx.guild.id]
+        player = playlist.wavelink.get_player(ctx.guild.id)
+
+        if not player.is_connected:
+            _, error = await ctx.invoke(self.join)
+            if error:
+                return
+
+        wavelink_client = playlist.wavelink
+        results = await wavelink_client.get_tracks(f'ytsearch:{query}', retry_on_failure=True)
+
+        if not results:
+            return await embed_maker.message(ctx, f"Couldn't find any matches for: {query}")
+
+        search_str = ""
+        for i, song in enumerate(results[:10]):
+            formatted_duration = format_time.ms(song.duration, accuracy=3)
+            search_str += f'`#{i + 1}` [{song.title}](http://y2u.be/{song.ytid}) - `{formatted_duration}`\n\n'
+
+        search_str += '**Pick a song by typing its number.** Type cancel to exit.'
+        search_msg = await embed_maker.message(ctx, search_str, nonce=10)
+
+        check = lambda m: m.channel.id == ctx.channel.id and m.author.id == ctx.author.id
+        try:
+            msg = await self.bot.wait_for('message', check=check)
+            content = msg.content
+            if not content.isdigit() or int(content) < 1 or int(content) > 10:
+                return await embed_maker.message(ctx, 'Invalid number', colour='red')
+
+            song = results[int(content) - 1]
+            await playlist.add(song, ctx.author.id)
+            await search_msg.delete()
+            await msg.delete()
+        except asyncio.TimeoutError:
+            return await embed_maker.message(ctx, 'Search timeout.', colour='red')
+
+
     @commands.command(help='pause the bot', usage='pause', clearance='User', examples=['pause'], cls=command.Command)
     async def pause(self, ctx):
         if await self.check_voice(ctx):
@@ -338,6 +382,7 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
 
         playlist = self.bot.playlists[ctx.guild.id]
         playlist.loop = True
+        await playlist.update_music_menu()
 
         return await ctx.message.add_reaction('👍')
 
@@ -368,7 +413,7 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         if not player and not player.is_connected:
             return await embed_maker.message(ctx, "I'm not connected to any voice channel in this server", colour='red')
 
-        if not ctx.author.voice.channel or ctx.author.voice.channel.id != player.channel_id:
+        if not ctx.author.voice or ctx.author.voice.channel.id != player.channel_id:
             return await embed_maker.message(ctx, "You are not in the same voice channel as the bot", colour='red')
 
     @commands.command(help='Sets up the music menu in a channel', usage='music_menu', examples=['music_menu'],
