@@ -10,10 +10,9 @@ cd MuusikBot
 ```
 pip install -r requirements.txt
 ```
-1. Rename **config_example.py** to **config.py** and add relevant info
-2. Install community edition mongodb server. Installation guides: https://docs.mongodb.com/manual/administration/install-community/
-3. Download Lavalink.jar and put it in the main folder: https://github.com/Frederikam/Lavalink/releases
-##### 3. Run the bot
+##### 3. Rename **config_example.py** to **config.py** and add relevant info
+##### 4. Install community edition mongodb server. Installation guides: https://docs.mongodb.com/manual/administration/install-community/
+##### 5. Run the bot
 ```
 python3 bot.py
 ```
