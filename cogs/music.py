@@ -43,29 +43,47 @@ class Playlist:
             region='eu'
         )
 
-    async def update_music_menu(self, to_update=None, page=1):
+    async def update_music_menu(self, to_update=None, page=1, queue_length=5):
         queue_str = ''
         currently_playing_str = ''
         current_song = self.current_song
 
-        queue_segment = self.queue[((page - 1) * 10) + 1:(page * 10) + 1]
+        queue_segment = self.queue[((page - 1) * queue_length) + 1:(page * queue_length) + 1]
         self.music_menu_page = page
 
         if to_update is None or to_update == 'currently playing':
             if current_song:
-                formatted_duration = format_time.ms(current_song.duration, accuracy=3)
-                currently_playing_str = f'[{current_song.title}](http://y2u.be/{current_song.ytid}) | `{formatted_duration}` - <@{current_song.info["requester"]}>'
-                currently_playing_str += '0m 00s '
+                song_type = current_song.type
+                link = current_song.uri if not current_song.ytid else f'http://y2u.be/{current_song.ytid}'
+                currently_playing_str = f'**{song_type}:** [{current_song.title}]({link})'
+
+                if song_type != 'Twitch':
+                    formatted_duration = format_time.ms(current_song.duration, accuracy=3)
+                    currently_playing_str += f' | `{formatted_duration}`'
+
+                currently_playing_str += f' - <@{current_song.requester}>'
             else:
                 currently_playing_str = '\u200b'
 
         if to_update is None or to_update == 'queue':
             queue_str = []
             for i, song in enumerate(queue_segment):
-                formatted_duration = format_time.ms(song.duration, accuracy=3)
-                value = f'`#{i + 1}` - [{song.title}](http://y2u.be/{song.ytid}) | `{formatted_duration}` - <@{song.info["requester"]}>'
+                song_type = song.type
+                link = song.uri if not song.ytid else f'http://y2u.be/{song.ytid}'
+
+                value = f'`#{i + 1}` - **{song_type}:** [{song.title}]({link})'
+
+                if song_type != 'Twitch':
+                    formatted_duration = format_time.ms(song.duration, accuracy=3)
+                    value += f' | `{formatted_duration}`'
+
+                value += f' - <@{song.requester}>'
+
                 queue_str.append(value)
             queue_str = '\n'.join(queue_str) if queue_str else '\u200b'
+
+            if len(queue_str) >= 1024:
+                return await self.update_music_menu(to_update, page, queue_length-1)
 
         if not queue_str:
             queue_str = self.old_queue_str
@@ -73,7 +91,7 @@ class Playlist:
         if not currently_playing_str:
             currently_playing_str = self.old_currently_playing_str
 
-        page_count = math.ceil(len(self) / 10)
+        page_count = math.ceil(len(self) / queue_length)
         if page_count == 0:
             page_count = 1
 
@@ -125,12 +143,27 @@ class Playlist:
         player = self.wavelink.get_player(self.guild.id)
 
         if type(song) == list:
-            song_list = song
+            song_list = [Song(s) for s in song]
             song = song_list[0]
         else:
+            song = Song(song)
             song_list = [song]
 
-        song.info['requester'] = requester
+        song.requester = requester
+
+        # add type data to song info
+        for song in song_list:
+            if 'https://www.youtube.com' in song.uri:
+                song_type = 'YouTube'
+            elif 'https://www.twitch.tv' in song.uri:
+                song_type = 'Twitch'
+            elif 'https://soundcloud.com' in song.uri:
+                song_type = 'Soundcloud'
+            else:
+                song_list.remove(song)
+                continue
+
+            song.type = song_type
 
         if self.current_song is None:
             self.current_song = song
@@ -138,7 +171,7 @@ class Playlist:
             await player.play(song)
 
         for song in song_list:
-            song.info['requester'] = requester
+            song.requester = requester
             self.queue.append(song)
 
         return await self.update_music_menu(to_update='queue')
@@ -177,6 +210,18 @@ class Playlist:
     async def clear_queue(self):
         self.queue.clear()
         await self.update_music_menu()
+
+
+class Song:
+    def __init__(self, song, type=None, requester=None):
+        self.id = song.id
+        self.info = song.info
+        self.uri = song.uri
+        self.ytid = song.ytid
+        self.title = song.title
+        self.duration = song.duration
+        self.type = type
+        self.requester = requester
 
 
 class Music(commands.Cog, wavelink.WavelinkMixin):
