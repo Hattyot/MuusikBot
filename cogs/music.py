@@ -13,20 +13,19 @@ db = database.Connection()
 
 class Playlist:
     def __init__(self, bot, guild):
-        # Stores the links os the songs in queue and the ones already played
-        self.queue = []
-        self.loop = False
-        self.loop_counter = 0
         self.bot = bot
         self.guild = guild
         self.current_song = None
+
+        self.queue = []
+        self.loop = False
+
+        self.music_menu = None
 
         self.old_queue_str = '\u200b'
         self.old_currently_playing_str = '\u200b'
         self.old_page_count = 1
         self.music_menu_page = 1
-
-        self.music_menu = None
 
         self.wavelink = wavelink.Client(bot=self.bot)
         self.bot.loop.create_task(self.start_node())
@@ -44,6 +43,9 @@ class Playlist:
         )
 
     async def update_music_menu(self, to_update=None, page=1, queue_length=5):
+        if not self.music_menu:
+            return
+
         queue_str = ''
         currently_playing_str = ''
         current_song = self.current_song
@@ -106,12 +108,11 @@ class Playlist:
         total_duration_formatted = format_time.ms(total_duration, accuracy=4)
         queue_str += f'\n\nSongs in queue: **{len(self)}**\nPlaylist duration: **{total_duration_formatted}**\nLoop: **{self.loop}**'
 
-        if self.music_menu:
-            new_embed = self.music_menu.embeds[0]
-            new_embed.set_field_at(0, name='Currently Playing:', value=currently_playing_str, inline=False)
-            new_embed.set_field_at(1, name='Queue:', value=queue_str, inline=False)
-            new_embed.set_footer(text=f'Page {page}/{page_count}')
-            await self.music_menu.edit(embed=new_embed)
+        new_embed = self.music_menu.embeds[0]
+        new_embed.set_field_at(0, name='Currently Playing:', value=currently_playing_str, inline=False)
+        new_embed.set_field_at(1, name='Queue:', value=queue_str, inline=False)
+        new_embed.set_footer(text=f'Page {page}/{page_count}')
+        await self.music_menu.edit(embed=new_embed)
 
     async def process_song(self, query, requester):
         is_url = query.startswith('https://')
@@ -144,11 +145,10 @@ class Playlist:
 
         if type(song) == list:
             song_list = [Song(s) for s in song]
-            song = song_list[0]
         else:
-            song = Song(song)
-            song_list = [song]
+            song_list = [Song(song)]
 
+        song = song_list[0]
         song.requester = requester
 
         # add type data to song info
