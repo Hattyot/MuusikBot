@@ -48,14 +48,11 @@ class Muusik(commands.Bot):
         user_id = payload.user_id
         member = await guild.fetch_member(user_id)
 
-        emote = payload.emoji.name
-        if payload.emoji.is_custom_emoji():
-            emote = f'<:{payload.emoji.name}:{payload.emoji.id}>'
-
         user_clearance = get_user_clearance(member)
         if member.bot or 'User' not in user_clearance:
             return
 
+        emote = payload.emoji.name
         player = playlist.wavelink.get_player(guild_id)
 
         async def play_pause():
