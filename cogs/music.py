@@ -37,9 +37,9 @@ class Playlist:
         await self.wavelink.initiate_node(
             host='127.0.0.1',
             port=2333,
-            rest_uri='http://0.0.0.0:2333',
+            rest_uri='http://127.0.0.1:2333',
             password='youshallnotpass',
-            identifier='TEST',
+            identifier='MuusikBot',
             region='eu'
         )
 
