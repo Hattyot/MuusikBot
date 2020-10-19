@@ -53,9 +53,9 @@ class Playlist:
         part_duration = duration // 40
         equal_segments = [range(i * part_duration, (i + 1) * part_duration) for i in range(40)]
 
-        counter = 0
         while current_position < duration:
-            current_position = counter * 5000
+            player = self.wavelink.get_player(self.guild.id)
+            current_position = round(player.position, -4)
 
             pos_range = [r for r in equal_segments if current_position in r]
             if not pos_range:
@@ -71,15 +71,13 @@ class Playlist:
             progress_bar_str = f'{formatted_position} |{line_str}| {formatted_duration}'
 
             if self.old_progress_bar == progress_bar_str:
-                await asyncio.sleep(5)
-                counter += 1
+                await asyncio.sleep(10)
                 continue
 
             self.old_progress_bar = progress_bar_str
 
             await self.update_music_menu(current_progress=progress_bar_str)
-            await asyncio.sleep(5)
-            counter += 1
+            await asyncio.sleep(10)
 
     async def update_music_menu(self, page=1, queue_length=5, current_progress=None):
         if not self.music_menu:
@@ -423,7 +421,6 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
             await msg.delete()
         except asyncio.TimeoutError:
             return await embed_maker.message(ctx, 'Search timeout.', colour='red')
-
 
     @commands.command(help='pause the bot', usage='pause', clearance='User', examples=['pause'], cls=command.Command)
     async def pause(self, ctx):
