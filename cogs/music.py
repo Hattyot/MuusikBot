@@ -26,6 +26,9 @@ class Playlist:
         self.old_currently_playing_str = '\u200b'
         self.old_page_count = 1
         self.music_menu_page = 1
+        self.old_progress_bar = ''
+
+        self.progress_bar_task = None
 
         self.wavelink = wavelink.Client(bot=self.bot)
         self.bot.loop.create_task(self.start_node())
@@ -42,50 +45,96 @@ class Playlist:
             region='eu'
         )
 
-    async def update_music_menu(self, to_update=None, page=1, queue_length=5):
+    async def progress_bar(self, duration):
+        self.old_progress_bar = ''
+        current_position = 0
+        formatted_duration = format_time.ms(duration, accuracy=3)
+
+        part_duration = duration // 40
+        equal_segments = [range(i * part_duration, (i + 1) * part_duration) for i in range(40)]
+
+        counter = 0
+        while current_position < duration:
+            current_position = counter * 5000
+
+            pos_range = [r for r in equal_segments if current_position in r]
+            if not pos_range:
+                return
+
+            position_index = equal_segments.index(pos_range[0])
+            formatted_position = format_time.ms(current_position, accuracy=3)
+
+            line_str = list('-' * 40)
+            line_str[position_index] = '●'
+            line_str = ''.join(line_str)
+
+            progress_bar_str = f'{formatted_position} |{line_str}| {formatted_duration}'
+
+            if self.old_progress_bar == progress_bar_str:
+                await asyncio.sleep(5)
+                counter += 1
+                continue
+
+            self.old_progress_bar = progress_bar_str
+
+            await self.update_music_menu(current_progress=progress_bar_str)
+            await asyncio.sleep(5)
+            counter += 1
+
+    async def update_music_menu(self, page=1, queue_length=5, current_progress=None):
         if not self.music_menu:
             return
 
-        queue_str = ''
-        currently_playing_str = ''
+        if not current_progress:
+            current_progress = self.old_progress_bar
+
         current_song = self.current_song
 
         queue_segment = self.queue[((page - 1) * queue_length) + 1:(page * queue_length) + 1]
         self.music_menu_page = page
 
-        if to_update is None or to_update == 'currently playing':
-            if current_song:
-                song_type = current_song.type
-                link = current_song.uri if not current_song.ytid else f'http://y2u.be/{current_song.ytid}'
-                currently_playing_str = f'**{song_type}:** [{current_song.title}]({link})'
+        if current_song:
+            song_type = current_song.type
+            link = current_song.uri if not current_song.ytid else f'http://y2u.be/{current_song.ytid}'
+            currently_playing_str = f'**{song_type}:** [{current_song.title}]({link})'
 
-                if song_type != 'Twitch':
-                    formatted_duration = format_time.ms(current_song.duration, accuracy=3)
-                    currently_playing_str += f' | `{formatted_duration}`'
+            if song_type != 'Twitch':
+                formatted_duration = format_time.ms(current_song.duration, accuracy=3)
+                currently_playing_str += f' | `{formatted_duration}`'
 
-                currently_playing_str += f' - <@{current_song.requester}>'
-            else:
-                currently_playing_str = '\u200b'
+            currently_playing_str += f' - <@{current_song.requester}>'
 
-        if to_update is None or to_update == 'queue':
-            queue_str = []
-            for i, song in enumerate(queue_segment):
-                song_type = song.type
-                link = song.uri if not song.ytid else f'http://y2u.be/{song.ytid}'
+            if song_type != 'Twitch':
+                if not current_progress:
+                    if self.progress_bar_task:
+                        self.old_progress_bar = ''
+                        self.progress_bar_task.cancel()
 
-                value = f'`#{i + 1}` - **{song_type}:** [{song.title}]({link})'
+                    self.progress_bar_task = asyncio.create_task(self.progress_bar(current_song.duration))
+                    return
+                else:
+                    currently_playing_str += f'\n{current_progress}'
 
-                if song_type != 'Twitch':
-                    formatted_duration = format_time.ms(song.duration, accuracy=3)
-                    value += f' | `{formatted_duration}`'
+        else:
+            currently_playing_str = '\u200b'
 
-                value += f' - <@{song.requester}>'
+        queue_str = []
+        for i, song in enumerate(queue_segment):
+            song_type = song.type
+            link = song.uri if not song.ytid else f'http://y2u.be/{song.ytid}'
 
-                queue_str.append(value)
-            queue_str = '\n'.join(queue_str) if queue_str else '\u200b'
+            value = f'`#{i + 1}` - **{song_type}:** [{song.title}]({link})'
 
-            if len(queue_str) >= 1024:
-                return await self.update_music_menu(to_update, page, queue_length-1)
+            if song_type != 'Twitch':
+                formatted_duration = format_time.ms(song.duration, accuracy=3)
+                value += f' | `{formatted_duration}`'
+            value += f' - <@{song.requester}>'
+            queue_str.append(value)
+
+        queue_str = '\n'.join(queue_str) if queue_str else '\u200b'
+
+        if len(queue_str) >= 1024:
+            return await self.update_music_menu(page, queue_length-1)
 
         if not queue_str:
             queue_str = self.old_queue_str
@@ -102,8 +151,6 @@ class Playlist:
         self.old_page_count = page_count
 
         total_duration = sum([s.duration for s in self.queue])
-        if current_song:
-            total_duration += current_song.duration
 
         total_duration_formatted = format_time.ms(total_duration, accuracy=4)
         queue_str += f'\n\nSongs in queue: **{len(self)}**\nPlaylist duration: **{total_duration_formatted}**\nLoop: **{self.loop}**'
@@ -167,18 +214,19 @@ class Playlist:
 
         if self.current_song is None:
             self.current_song = song
-            await self.update_music_menu(to_update='currently playing')
+            await self.update_music_menu()
             await player.play(song)
 
         for song in song_list:
             song.requester = requester
             self.queue.append(song)
 
-        return await self.update_music_menu(to_update='queue')
+        return await self.update_music_menu()
 
     async def next(self):
         previous_song = self.current_song
         self.current_song = None
+        self.old_progress_bar = ''
         if len(self.queue) == 0:
             await self.update_music_menu()
             return None
@@ -200,7 +248,7 @@ class Playlist:
 
     async def shuffle(self):
         random.shuffle(self.queue)
-        await self.update_music_menu(to_update='queue')
+        await self.update_music_menu()
 
     async def clear(self):
         self.current_song = None
@@ -231,8 +279,19 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
     @wavelink.WavelinkMixin.listener()
     async def on_track_end(self, node, payload):
         player = payload.player
-        player_guild_id = player.guild_id
-        playlist = self.bot.playlists[player_guild_id]
+        playlist = self.bot.playlists[player.guild_id]
+
+        # put the progress bar at the end and wait 2 seconds before the next song plays so it looks nicer
+        formatted_position = format_time.ms(playlist.queue[0].duration, accuracy=3)
+
+        line_str = list('-' * 40)
+        line_str[-1] = '●'
+        line_str = ''.join(line_str)
+
+        progress_bar_str = f'{formatted_position} |{line_str}| {formatted_position}'
+
+        await playlist.update_music_menu(current_progress=progress_bar_str)
+        await asyncio.sleep(2)
 
         return await playlist.next()
 
