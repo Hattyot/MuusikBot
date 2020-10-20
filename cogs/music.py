@@ -4,6 +4,7 @@ import time
 import math
 import wavelink
 import asyncio
+import re
 from config import EMBED_COLOUR
 from discord.ext import commands
 from modules import embed_maker, command, format_time, database
@@ -48,21 +49,22 @@ class Playlist:
     async def progress_bar(self, duration):
         self.old_progress_bar = ''
         current_position = 0
-        formatted_duration = format_time.ms(duration, accuracy=3)
+        formatted_duration_length = len(format_time.ms(duration, accuracy=3).split(' '))
+        formatted_duration = format_time.ms(duration, accuracy=3, progress_bar=formatted_duration_length)
 
         part_duration = duration // 40
         equal_segments = [range(i * part_duration, (i + 1) * part_duration) for i in range(40)]
 
         while current_position < duration:
             player = self.wavelink.get_player(self.guild.id)
-            current_position = round(player.position, -4)
+            current_position = 5 * round(round(player.position, -3) / 5)
 
             pos_range = [r for r in equal_segments if current_position in r]
             if not pos_range:
                 return
 
             position_index = equal_segments.index(pos_range[0])
-            formatted_position = format_time.ms(current_position, accuracy=3)
+            formatted_position = format_time.ms(current_position, accuracy=3, progress_bar=formatted_duration_length)
 
             line_str = list('-' * 40)
             line_str[position_index] = '●'
@@ -71,13 +73,13 @@ class Playlist:
             progress_bar_str = f'{formatted_position} |{line_str}| {formatted_duration}'
 
             if self.old_progress_bar == progress_bar_str:
-                await asyncio.sleep(10)
+                await asyncio.sleep(5)
                 continue
 
             self.old_progress_bar = progress_bar_str
 
             await self.update_music_menu(current_progress=progress_bar_str)
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
 
     async def update_music_menu(self, page=1, queue_length=5, current_progress=None):
         if not self.music_menu:
@@ -198,17 +200,8 @@ class Playlist:
 
         # add type data to song info
         for song in song_list:
-            if 'https://www.youtube.com' in song.uri:
-                song_type = 'YouTube'
-            elif 'https://www.twitch.tv' in song.uri:
-                song_type = 'Twitch'
-            elif 'https://soundcloud.com' in song.uri:
-                song_type = 'Soundcloud'
-            else:
-                song_list.remove(song)
-                continue
-
-            song.type = song_type
+            regex = r'https:\/\/(?:www)?.?([A-z]+)\.(?:com|tv)'
+            song.type = re.findall(regex, song.uri)[0].capitalize()
 
         if self.current_song is None:
             self.current_song = song
