@@ -106,10 +106,6 @@ class Playlist:
 
             if song_type != 'Twitch':
                 if not current_progress:
-                    if self.progress_bar_task:
-                        self.old_progress_bar = ''
-                        self.progress_bar_task.cancel()
-
                     self.progress_bar_task = asyncio.create_task(self.progress_bar(current_song.duration))
                     return
                 else:
@@ -215,9 +211,7 @@ class Playlist:
         return await self.update_music_menu()
 
     async def next(self):
-        previous_song = self.current_song
-        self.current_song = None
-        self.old_progress_bar = ''
+        previous_song = self.queue[0] if self.queue else None
         if len(self.queue) == 0:
             await self.update_music_menu()
             return None
@@ -272,17 +266,22 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         player = payload.player
         playlist = self.bot.playlists[player.guild_id]
 
-        # put the progress bar at the end and wait 2 seconds before the next song plays so it looks nicer
-        formatted_position = format_time.ms(playlist.queue[0].duration, accuracy=3)
+        playlist.current_song = None
+        playlist.old_progress_bar = ''
+        playlist.progress_bar_task.cancel()
 
-        line_str = list('-' * 40)
-        line_str[-1] = '●'
-        line_str = ''.join(line_str)
+        if payload.reason != 'STOPPED':
+            # put the progress bar at the end and wait 2 seconds before the next song plays so it looks nicer
+            formatted_position = format_time.ms(playlist.queue[0].duration, accuracy=3)
 
-        progress_bar_str = f'{formatted_position} |{line_str}| {formatted_position}'
+            line_str = list('-' * 40)
+            line_str[-1] = '●'
+            line_str = ''.join(line_str)
 
-        await playlist.update_music_menu(current_progress=progress_bar_str)
-        await asyncio.sleep(2)
+            progress_bar_str = f'{formatted_position} |{line_str}| {formatted_position}'
+
+            await playlist.update_music_menu(current_progress=progress_bar_str)
+            await asyncio.sleep(2)
 
         return await playlist.next()
 
