@@ -23,10 +23,10 @@ class Muusik(commands.Bot):
         super().__init__(command_prefix=get_prefix, case_insensitive=True, help_command=None)
 
         # start lavalink
-        # self.lavalink_process = subprocess.Popen(['java', '-jar', 'Lavalink.jar'])
+        self.lavalink_process = subprocess.Popen(['java', '-jar', 'Lavalink.jar'])
 
         # wait for lavalink to start
-        # time.sleep(10)
+        time.sleep(10)
         # Load Cogs
         for filename in os.listdir('./cogs'):
             if filename.endswith('.py'):
@@ -68,20 +68,26 @@ class Muusik(commands.Bot):
         async def shuffle():
             await playlist.shuffle()
 
+        def page_count(playlist):
+            pc = math.ceil(len(playlist) / 5)
+            if pc < 1:
+                pc = 1
+            return pc
+
         async def back_page():
             current_page = playlist.music_menu_page
             new_page = current_page - 1
             if new_page < 1:
-                page_count = math.ceil(len(playlist) / 5)
-                new_page = page_count
+                pc = page_count(playlist)
+                new_page = pc
 
             await playlist.update_music_menu(page=new_page)
 
         async def forward_page():
             current_page = playlist.music_menu_page
             new_page = current_page + 1
-            page_count = math.ceil(len(playlist) / 5)
-            if new_page > page_count:
+            pc = page_count(playlist)
+            if new_page > pc:
                 new_page = 1
 
             await playlist.update_music_menu(page=new_page)
@@ -229,7 +235,7 @@ class Muusik(commands.Bot):
                 await utils_cog.create_timer(guild_id=member.guild.id, expires=expires, event='playlist_clear', extras={})
 
     async def close(self):
-        # self.lavalink_process.kill()
+        self.lavalink_process.kill()
         await super().close()
 
     def run(self):
