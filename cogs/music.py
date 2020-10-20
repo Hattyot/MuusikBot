@@ -201,6 +201,7 @@ class Playlist:
 
         if self.current_song is None:
             self.current_song = song
+            self.old_progress_bar = ''
             await self.update_music_menu()
             await player.play(song)
 
