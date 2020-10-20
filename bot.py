@@ -23,10 +23,10 @@ class Muusik(commands.Bot):
         super().__init__(command_prefix=get_prefix, case_insensitive=True, help_command=None)
 
         # start lavalink
-        self.lavalink_process = subprocess.Popen(['java', '-jar', 'Lavalink.jar'])
+        # self.lavalink_process = subprocess.Popen(['java', '-jar', 'Lavalink.jar'])
 
         # wait for lavalink to start
-        time.sleep(10)
+        # time.sleep(10)
         # Load Cogs
         for filename in os.listdir('./cogs'):
             if filename.endswith('.py'):
@@ -229,7 +229,7 @@ class Muusik(commands.Bot):
                 await utils_cog.create_timer(guild_id=member.guild.id, expires=expires, event='playlist_clear', extras={})
 
     async def close(self):
-        self.lavalink_process.kill()
+        # self.lavalink_process.kill()
         await super().close()
 
     def run(self):

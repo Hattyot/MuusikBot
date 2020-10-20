@@ -57,7 +57,7 @@ class Playlist:
 
         while current_position < duration:
             player = self.wavelink.get_player(self.guild.id)
-            current_position = 5 * round(round(player.position, -3) / 5)
+            current_position = 5000 * round(player.position / 5000)
 
             pos_range = [r for r in equal_segments if current_position in r]
             if not pos_range:
