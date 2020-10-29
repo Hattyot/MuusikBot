@@ -233,7 +233,6 @@ class Playlist:
 
             self.queue.append(s)
 
-        print([s.title for s in self.queue])
         db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': [(self.current_song.id, self.current_song.requester)] + [(s.id, s.requester) for s in self.queue]}})
 
         return await self.update_music_menu()
@@ -392,13 +391,8 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
     @commands.group(name='playlist', help='Manage saved playlist or save a playlist', usage='playlist [sub-command | page]',
                       examples=['playlist 2', 'playlist save electro swing', 'playlist delete electro swing', 'playlist get electro swing'],
                       sub_commands=['get', 'save', 'delete'], clearance='User', cls=command.Group)
-    async def _playlist(self, ctx, page='1'):
+    async def _playlist(self, ctx):
         if ctx.subcommand_passed is None:
-            if not page.isdigit():
-                page = 1
-            else:
-                page = int(page)
-
             playlists_data = [*db.playlists.find({'guild_id': ctx.guild.id})][:10]
             pages = {1: ''}
             if not playlists_data:
@@ -418,10 +412,7 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
                     pages[page] += ", ".join([f'**#{i + 1}** - `{s.title}`' for i, s in enumerate(songs)])
                     pages[page] += ' ...\n'
 
-            if page > len(pages.keys()):
-                page = 1
-
-            embed = discord.Embed(title='Playlists', colour=config.EMBED_COLOUR, description=pages[page], timestamp=datetime.datetime.now())
+            embed = discord.Embed(title='Playlists', colour=config.EMBED_COLOUR, description=pages[1], timestamp=datetime.datetime.now())
             embed.set_footer(text=f'{ctx.author} - Page 1/{len(pages.keys())}', icon_url=ctx.author.avatar_url)
 
             return await ctx.channel.send(embed=embed)
@@ -484,6 +475,11 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
 
         songs = playlist_data['playlist']
         tracks = []
+        playlist = self.bot.playlists[ctx.guild.id]
+        player = playlist.wavelink_client.get_player(ctx.guild.id)
+        if not playlist.queue and not player.is_connected:
+            await ctx.invoke(self.join)
+
         for i, song in enumerate(songs):
             song_id, requester = song
             track = Song(await self.bot.wavelink.build_track(song_id), requester=requester)
@@ -493,7 +489,6 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
 
             tracks.append(track)
 
-        playlist = self.bot.playlists[ctx.guild.id]
         return await playlist.add(tracks)
 
     @commands.command(help='search for a song', usage='search [query]', examples=['search jack stauber'], clearance='User', cls=command.Command)

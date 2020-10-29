@@ -67,10 +67,12 @@ class Muusik(commands.Bot):
             await player.set_pause(not player.is_paused)
 
         async def skip():
-            if not player.is_connected and playlist.queue:
-                del playlist.queue[0]
-                playlist.current_song = playlist.queue[0] if playlist.queue else None
-                db.dj.update_one({'guild_id': guild.id}, {'$set': {'playlist': [(s.id, s.requester) for s in playlist.queue]}})
+            if not player.is_connected and playlist.current_song:
+                playlist.current_song = None
+                if playlist.queue:
+                    playlist.current_song = playlist.queue[0]
+                    db.dj.update_one({'guild_id': guild.id}, {'$set': {'playlist': [(s.id, s.requester) for s in playlist.queue]}})
+                    del playlist.queue[0]
                 return await playlist.update_music_menu()
 
             await player.stop()
@@ -240,7 +242,6 @@ class Muusik(commands.Bot):
                     dj_data = db.dj.find_one({'guild_id': guild.id})
                     if 'playlist' in dj_data:
                         songs = dj_data['playlist']
-                        tracks = []
                         for i, song in enumerate(songs):
                             song_id, requester = song
                             track = Song(await self.wavelink.build_track(song_id), requester=requester)
