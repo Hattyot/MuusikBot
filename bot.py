@@ -2,10 +2,10 @@ import discord
 import os
 import config
 import traceback
-import time
 import math
-import subprocess
-from cogs.music import Playlist
+import wavelink
+import re
+from cogs.music import Playlist, Song
 from modules import database, embed_maker
 from cogs.utils import get_user_clearance
 from discord.ext import commands
@@ -32,6 +32,7 @@ class Muusik(commands.Bot):
                 self.load_extension(f'cogs.{filename[:-3]}')
                 print(f'{filename[:-3]} is now loaded')
 
+        self.wavelink = wavelink.Client(bot=self)
         self.playlists = {}
 
     async def on_raw_reaction_add(self, payload):
@@ -45,7 +46,7 @@ class Muusik(commands.Bot):
         if not music_menu or music_menu.id != message_id:
             return
 
-        guild = await self.fetch_guild(guild_id)
+        guild = self.get_guild(guild_id)
         user_id = payload.user_id
         member = await guild.fetch_member(user_id)
 
@@ -54,12 +55,24 @@ class Muusik(commands.Bot):
             return
 
         emote = payload.emoji.name
-        player = playlist.wavelink.get_player(guild_id)
+        player = playlist.wavelink_client.get_player(guild_id)
 
         async def play_pause():
+            if not player.is_connected and playlist.queue:
+                voice_state = guild._voice_states.get(member.id, None)
+                if voice_state:
+                    await player.connect(voice_state.channel.id)
+                    return await player.play(playlist.current_song)
+
             await player.set_pause(not player.is_paused)
 
         async def skip():
+            if not player.is_connected and playlist.queue:
+                del playlist.queue[0]
+                playlist.current_song = playlist.queue[0] if playlist.queue else None
+                db.dj.update_one({'guild_id': guild.id}, {'$set': {'playlist': [(s.id, s.requester) for s in playlist.queue]}})
+                return await playlist.update_music_menu()
+
             await player.stop()
 
         async def loop():
@@ -175,7 +188,7 @@ class Muusik(commands.Bot):
             await utility_cog.help(ctx)
 
     async def on_guild_join(self, guild):
-        self.playlists[guild.id] = Playlist(self, guild)
+        self.playlists[guild.id] = Playlist(self, guild, self.wavelink)
 
     async def on_message_delete(self, message):
         music_menu = self.playlists[message.guild.id].music_menu
@@ -205,7 +218,7 @@ class Muusik(commands.Bot):
         print(f'{self.user} is ready')
 
         for guild in self.guilds:
-            self.playlists[guild.id] = Playlist(self, guild)
+            self.playlists[guild.id] = Playlist(self, guild, self.wavelink)
 
             dj_data = db.dj.find_one({'guild_id': guild.id})
             if dj_data:
@@ -220,26 +233,38 @@ class Muusik(commands.Bot):
                         db.dj.update_one({'guild_id': guild.id}, {'$set': {'music_menu_channel_id': 0, 'music_menu_message_id': 0}})
                         return
 
-                    self.playlists[guild.id].music_menu = music_menu
-                    await self.playlists[guild.id].update_music_menu()
+                    playlist = self.playlists[guild.id]
+                    playlist.music_menu = music_menu
 
-                    db.timers.delete_many({'guild_id': guild.id, 'event': 'playlist_clear'})
+                    # rebuild playlist
+                    dj_data = db.dj.find_one({'guild_id': guild.id})
+                    if 'playlist' in dj_data:
+                        songs = dj_data['playlist']
+                        tracks = []
+                        for i, song in enumerate(songs):
+                            song_id, requester = song
+                            track = Song(await self.wavelink.build_track(song_id), requester=requester)
 
-        # run old timers
-        utils_cog = self.get_cog('Utils')
-        await utils_cog.run_old_timers()
+                            regex = r'https:\/\/(?:www)?.?([A-z]+)\.(?:com|tv)'
+                            track.type = re.findall(regex, track.uri)[0].capitalize()
+
+                            if i == 0:
+                                playlist.current_song = track
+                                continue
+
+                            playlist.queue.append(track)
+
+                    await playlist.update_music_menu()
 
     async def on_voice_state_update(self, member, before, after):
         voice_channel = before.channel
         playlist = self.playlists[member.guild.id]
-        player = playlist.wavelink.get_player(member.guild.id)
+        player = playlist.wavelink_client.get_player(member.guild.id)
 
         # resume bot and playlist when someone joins back
         if not voice_channel and after.channel:
             if player.is_paused:
                 await player.set_pause(False)
-
-            return db.timers.delete_many({'guild_id': member.guild.id, 'event': 'playlist_clear'})
 
         if not voice_channel:
             return
@@ -249,11 +274,6 @@ class Muusik(commands.Bot):
         # pause bot when last person leaves and start 2m timer to clear playlist
         if connected_members == 1:
             await player.set_pause(True)
-            clear_timer = db.timers.find_one({'guild_id': member.guild.id, 'event': 'playlist_clear'})
-            if not clear_timer:
-                utils_cog = self.get_cog('Utils')
-                expires = round(time.time()) + 120
-                await utils_cog.create_timer(guild_id=member.guild.id, expires=expires, event='playlist_clear', extras={})
 
     async def close(self):
         self.lavalink_process.kill()
