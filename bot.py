@@ -6,7 +6,7 @@ import time
 import math
 import subprocess
 from cogs.music import Playlist
-from modules import database
+from modules import database, embed_maker
 from cogs.utils import get_user_clearance
 from discord.ext import commands
 
@@ -19,7 +19,6 @@ async def get_prefix(bot, message):
 
 class Muusik(commands.Bot):
     def __init__(self):
-        self.playlists = {}
         super().__init__(command_prefix=get_prefix, case_insensitive=True, help_command=None)
 
         # start lavalink
@@ -32,6 +31,8 @@ class Muusik(commands.Bot):
             if filename.endswith('.py'):
                 self.load_extension(f'cogs.{filename[:-3]}')
                 print(f'{filename[:-3]} is now loaded')
+
+        self.playlists = {}
 
     async def on_raw_reaction_add(self, payload):
         guild_id = payload.guild_id
@@ -150,7 +151,8 @@ class Muusik(commands.Bot):
             return await channel.send(embed=embed)
 
     async def on_message(self, message):
-        if message.nonce != 10:
+        music_menu = self.playlists[message.guild.id].music_menu
+        if music_menu and music_menu.channel.id == message.channel.id and message.nonce != 10:
             await message.delete(delay=5)
 
         if message.author.bot:
@@ -172,6 +174,14 @@ class Muusik(commands.Bot):
             utility_cog = self.get_cog('Utility')
             await utility_cog.help(ctx)
 
+    async def on_guild_join(self, guild):
+        self.playlists[guild.id] = Playlist(self, guild)
+
+    async def on_message_delete(self, message):
+        music_menu = self.playlists[message.guild.id].music_menu
+        if music_menu and music_menu.id == message.id:
+            self.playlists[message.guild.id].music_menu = None
+
     async def process_commands(self, message):
         ctx = await self.get_context(message)
         if ctx.command is None:
@@ -181,6 +191,10 @@ class Muusik(commands.Bot):
 
         if ctx.command.clearance not in user_clearance:
             return
+
+        if not self.playlists[message.guild.id].music_menu and ctx.cog.qualified_name == 'Music' and ctx.command.name != 'music_menu':
+            return await embed_maker.message(ctx, f'You can not use that command before setting up the music menu.'
+                                                  f'\nYou can do that by typing `{config.PREFIX}music_menu`', nonce=10)
 
         return await self.invoke(ctx)
 
@@ -200,7 +214,12 @@ class Muusik(commands.Bot):
 
                 channel = guild.get_channel(music_menu_channel_id)
                 if channel:
-                    music_menu = await channel.fetch_message(music_menu_message_id)
+                    try:
+                        music_menu = await channel.fetch_message(music_menu_message_id)
+                    except discord.HTTPException:
+                        db.dj.update_one({'guild_id': guild.id}, {'$set': {'music_menu_channel_id': 0, 'music_menu_message_id': 0}})
+                        return
+
                     self.playlists[guild.id].music_menu = music_menu
                     await self.playlists[guild.id].update_music_menu()
 
@@ -215,6 +234,7 @@ class Muusik(commands.Bot):
         playlist = self.playlists[member.guild.id]
         player = playlist.wavelink.get_player(member.guild.id)
 
+        # resume bot and playlist when someone joins back
         if not voice_channel and after.channel:
             if player.is_paused:
                 await player.set_pause(False)
@@ -226,6 +246,7 @@ class Muusik(commands.Bot):
 
         connected_members = len(voice_channel.members)
 
+        # pause bot when last person leaves and start 2m timer to clear playlist
         if connected_members == 1:
             await player.set_pause(True)
             clear_timer = db.timers.find_one({'guild_id': member.guild.id, 'event': 'playlist_clear'})

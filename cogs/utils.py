@@ -29,7 +29,7 @@ async def get_member(ctx, bot, source):
         member = ctx.guild.get_member(int(source))
         if member is None:
             try:
-                member = await ctx.guild.fetch_member(int(source))
+                return await ctx.guild.fetch_member(int(source))
             except:
                 return 'Invalid user ID'
 
@@ -95,8 +95,7 @@ def get_user_clearance(member):
     if permissions.manage_messages:
         clearance.append('Mod')
 
-    # piksel role
-    if 752785816300027905 not in [r.id for r in member.roles]:
+    if not (set(config.NON_DJS) & set([r.id for r in member.roles])):
         clearance.append('User')
 
     return clearance

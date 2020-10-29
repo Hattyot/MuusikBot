@@ -4,6 +4,9 @@ PREFIX = '>'
 EMBED_COLOUR = 0x00a6ad
 DEV_IDS = []
 
+# Roles which cant use the bot commands
+NON_DJS = []
+
 # Error server and channel where to send error messages
 ERROR_SERVER = 0
 ERROR_CHANNEL = 0

@@ -43,7 +43,7 @@ class Playlist:
             rest_uri='http://127.0.0.1:2333',
             password='youshallnotpass',
             identifier='MuusikBot',
-            region='eu'
+            region=str(self.guild.region)
         )
 
     async def progress_bar(self, duration):
@@ -55,8 +55,13 @@ class Playlist:
         part_duration = duration // 40
         equal_segments = [range(i * part_duration, (i + 1) * part_duration) for i in range(40)]
 
+        player = self.wavelink.get_player(self.guild.id)
+
         while current_position < duration:
-            player = self.wavelink.get_player(self.guild.id)
+            if player.is_paused:
+                await asyncio.sleep(5)
+                continue
+
             current_position = 5000 * round(player.position / 5000)
 
             pos_range = [r for r in equal_segments if current_position in r]
