@@ -6,6 +6,9 @@ import asyncio
 import re
 import config
 import datetime
+import base64
+import requests
+import time
 from discord.ext import commands
 from modules import embed_maker, command, format_time, database
 
@@ -33,6 +36,98 @@ class Playlist:
 
         self.wavelink_client = wavelink_client
         self.bot.loop.create_task(self.start_node())
+
+        # Spotify
+        self.spotify_id = config.SPOTIFY_CLIENT_ID
+        self.spotify_secret = config.SPOTIFY_CLIENT_SECRET
+        self.headers = {}
+        self.data = {}
+        self.token = ""
+        self.token_expire = 0
+
+    async def renew_spotify_token(self):
+        url = "https://accounts.spotify.com/api/token"
+        auth = base64.b64encode(f'{self.spotify_id}:{self.spotify_secret}'.encode('ascii')).decode('ascii')
+        headers = {'Authorization': f'Basic {auth}'}
+        data = {'grant_type': "client_credentials"}
+        response = requests.post(url, headers=headers, data=data)
+        response_json = response.json()
+
+        self.token = response_json['access_token']
+        self.token_expire = time.time() + response_json['expires_in']
+
+    async def process_spotify_playlist(self, playlist_url, requester):
+        playlist_id = re.findall(r'/playlist/(.*)', playlist_url)
+        if not playlist_id:
+            return
+
+        playlist_id = playlist_id[0].strip()
+        if config.SPOTIFY_CLIENT_ID and self.token_expire <= time.time():
+            await self.renew_spotify_token()
+            if not self.token or self.token_expire <= time.time():
+                return
+
+        headers = {'Authorization': f'Bearer {self.token}'}
+        url = f'https://api.spotify.com/v1/playlists/{playlist_id}/tracks?offset=0&limit=250'
+
+        response = requests.get(url, headers=headers).json()
+        if 'tracks' in response and response['tracks']:
+            tracks = response['tracks']['items']
+            futures = []
+            queue_len = len(self.queue)
+            self.queue += [0] * len(tracks)
+            should_play = self.current_song is None
+            for i, track in enumerate(tracks):
+                future = asyncio.ensure_future(self.fetch_track(i, queue_len, track, requester))
+                futures.append(future)
+
+            await asyncio.gather(*futures, return_exceptions=True)
+            self.queue = [s for s in self.queue if s]
+            db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': [(self.current_song.id, self.current_song.requester)] + [(s.id, s.requester) for s in self.queue]}})
+            if should_play:
+                await self.wavelink_client.get_player(self.guild.id).play(self.current_song)
+            await self.update_music_menu()
+            return True
+
+    async def fetch_track(self, index, queue_len, track, requester):
+        track_name = track["track"]["name"]
+        track_artist = track["track"]["artists"][0]["name"]
+        track_uri = track["track"]['external_urls']['spotify']
+        track_obj = await self.wavelink_client.get_tracks(f'ytsearch:{track_name} - {track_artist}', retry_on_failure=True)
+        if track_obj:
+            track_obj = Song(track_obj[0], requester=requester, song_type=re.findall(r'https:\/\/(?:www)?.?([A-z]+)\.(?:com|tv)', track_obj[0].uri)[0].capitalize())
+            track_obj.custom_name = track_artist
+            track_obj.custom_uri = track_uri
+            if index == 0 and self.current_song is None:
+                self.current_song = track_obj
+            else:
+                self.queue[queue_len + index] = track_obj
+
+    async def process_spotify_track(self, track_url, requester):
+        track_id = re.findall(r'/track/(.*)', track_url)
+        if not track_id:
+            return
+
+        playlist_id = track_id[0].strip()
+        if config.SPOTIFY_CLIENT_ID and self.token_expire <= time.time():
+            await self.renew_spotify_token()
+            if not self.token or self.token_expire <= time.time():
+                return
+
+        headers = {'Authorization': f'Bearer {self.token}'}
+        url = f'https://api.spotify.com/v1/tracks/{playlist_id}'
+
+        track = requests.get(url, headers=headers).json()
+        if not track:
+            return
+
+        track_obj = await self.wavelink_client.get_tracks(f'ytsearch:{track["name"]} - {track["artists"][0]["name"]}', retry_on_failure=True)
+        if track_obj:
+            track_obj = Song(track_obj[0], requester=requester, song_type=re.findall(r'https:\/\/(?:www)?.?([A-z]+)\.(?:com|tv)', track_obj[0].uri)[0].capitalize())
+            track_obj.custom_name = track["name"]
+            track_obj.custom_uri = track['external_urls']['spotify']
+            await self.add(track_obj)
+            return True
 
     async def start_node(self):
         await self.bot.wait_until_ready()
@@ -106,8 +201,8 @@ class Playlist:
 
         if current_song:
             song_type = current_song.type
-            link = current_song.uri if not current_song.ytid else f'http://y2u.be/{current_song.ytid}'
-            currently_playing_str = f'**{song_type}:** [{current_song.title}]({link})'
+            currently_playing_str = f'**{song_type}:** ' if song_type != 'Youtube' else ''
+            currently_playing_str += f'[{current_song.title}]({current_song.uri})'
 
             if song_type != 'Twitch':
                 formatted_duration = format_time.ms(current_song.duration, accuracy=3)
@@ -130,9 +225,9 @@ class Playlist:
         queue_str = []
         for i, song in enumerate(queue_segment):
             song_type = song.type
-            link = song.uri if not song.ytid else f'http://y2u.be/{song.ytid}'
-
-            value = f'`#{(i + 1) + 5 * (page - 1)}` - **{song_type}:** [{song.title}]({link})'
+            value = f'`#{(i + 1) + 5 * (page - 1)}` - '
+            value += f'**{song_type}:** ' if song_type != 'Youtube' else ''
+            value += f'[{song.title}]({song.uri})'
 
             if song_type != 'Twitch':
                 formatted_duration = format_time.ms(song.duration, accuracy=3)
@@ -172,12 +267,28 @@ class Playlist:
         new_embed.set_field_at(1, name='Queue:', value=queue_str, inline=False)
         new_embed.set_footer(text=f'Page {page}/{page_count}')
         await self.music_menu.edit(embed=new_embed)
+        return True
 
     async def process_song(self, query, requester):
         is_url = query.startswith('https://')
         is_playlist = is_url and '&list=' in query
 
         if is_url:
+            if 'https://open.spotify.com' in query:
+                is_spotify_playlist = '/playlist/' in query
+                if is_spotify_playlist:
+                    response = await self.process_spotify_playlist(query, requester)
+                    if not response:
+                        return 'Invalid spotify playlist url'
+                    else:
+                        return
+                else:
+                    response = await self.process_spotify_track(query, requester)
+                    if not response:
+                        return 'Invalid spotify song url'
+                    else:
+                        return
+
             songs_data = await self.wavelink_client.get_tracks(f'{query}', retry_on_failure=True)
             if not songs_data:
                 return f"Invalid url: {query}"
@@ -208,6 +319,8 @@ class Playlist:
                 song_list = [Song(s) for s in song]
             else:
                 song_list = song
+        elif not requester:
+            song_list = [song]
         else:
             song_list = [Song(song)]
 
@@ -260,19 +373,15 @@ class Playlist:
 
     async def clear(self):
         self.queue = []
-        db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': [(self.current_song.id, self.current_song.requester)]}})
+        pl = [(self.current_song.id, self.current_song.requester)] if self.current_song else []
+        db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': pl}})
         await self.update_music_menu()
 
 
-class Song:
+class Song(wavelink.Track):
     def __init__(self, song, song_type=None, requester=None):
-        self.id = song.id
-        self.info = song.info
-        self.uri = song.uri
-        self.ytid = song.ytid
-        self.title = song.title
-        self.duration = song.duration
-        self.song_type = song_type
+        super().__init__(song.id, song.info, song.query)
+        self.type = song_type
         self.requester = requester
 
 
@@ -282,7 +391,6 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
 
     @wavelink.WavelinkMixin.listener()
     async def on_track_end(self, node, payload):
-        print(payload.track)
         player = payload.player
         playlist = self.bot.playlists[player.guild_id]
 

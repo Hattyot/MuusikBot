@@ -131,7 +131,7 @@ class Muusik(commands.Bot):
 
     async def on_command_error(self, ctx, exception):
         trace = exception.__traceback__
-        verbosity = 4
+        verbosity = 8
         lines = traceback.format_exception(type(exception), exception, trace, verbosity)
         traceback_text = ''.join(lines)
 
