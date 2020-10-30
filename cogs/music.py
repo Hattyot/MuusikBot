@@ -211,15 +211,13 @@ class Playlist:
         else:
             song_list = [Song(song)]
 
-        first_song = song_list.pop(0)
-
         if requester:
-            first_song.requester = requester
-
-            # add type data to song info
-            for song in song_list:
+            for s in song_list:
                 regex = r'https:\/\/(?:www)?.?([A-z]+)\.(?:com|tv)'
-                song.type = re.findall(regex, song.uri)[0].capitalize()
+                s.type = re.findall(regex, s.uri)[0].capitalize()
+                s.requester = requester
+
+        first_song = song_list.pop(0)
 
         if self.current_song is None:
             self.current_song = first_song
@@ -227,11 +225,7 @@ class Playlist:
             if player.is_connected:
                 await player.play(first_song)
 
-        for s in song_list:
-            if requester:
-                s.requester = requester
-
-            self.queue.append(s)
+        self.queue += song_list
 
         db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': [(self.current_song.id, self.current_song.requester)] + [(s.id, s.requester) for s in self.queue]}})
 
@@ -288,6 +282,7 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
 
     @wavelink.WavelinkMixin.listener()
     async def on_track_end(self, node, payload):
+        print(payload.track)
         player = payload.player
         playlist = self.bot.playlists[player.guild_id]
 
@@ -389,16 +384,16 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
             return await embed_maker.message(ctx, error, colour='red')
 
     @commands.group(name='playlist', help='Manage saved playlist or save a playlist', usage='playlist [sub-command | page]',
-                      examples=['playlist 2', 'playlist save electro swing', 'playlist delete electro swing', 'playlist get electro swing'],
-                      sub_commands=['get', 'save', 'delete'], clearance='User', cls=command.Group)
+                    examples=['playlist 2', 'playlist save electro swing', 'playlist delete electro swing', 'playlist get electro swing'],
+                    sub_commands=['get', 'save', 'delete'], clearance='User', cls=command.Group)
     async def _playlist(self, ctx):
         if ctx.subcommand_passed is None:
             playlists_data = [*db.playlists.find({'guild_id': ctx.guild.id})][:10]
+            page = 1
             pages = {1: ''}
             if not playlists_data:
                 pages[1] = f'Currently there are no playlists saved'
             else:
-                page = 1
                 # generate topics string
                 for i, playlist_obj in enumerate(playlists_data):
                     if i == 10:
@@ -412,13 +407,46 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
                     pages[page] += ", ".join([f'**#{i + 1}** - `{s.title}`' for i, s in enumerate(songs)])
                     pages[page] += ' ...\n'
 
-            embed = discord.Embed(title='Playlists', colour=config.EMBED_COLOUR, description=pages[1], timestamp=datetime.datetime.now())
+            embed = discord.Embed(title='Playlists', colour=config.EMBED_COLOUR, description=pages[page], timestamp=datetime.datetime.now())
             embed.set_footer(text=f'{ctx.author} - Page 1/{len(pages.keys())}', icon_url=ctx.author.avatar_url)
 
-            return await ctx.channel.send(embed=embed)
+            playlist_msg = await ctx.channel.send(embed=embed)
+
+            if len(pages.keys()) == 1:
+                return
+
+            reactions = ['◀', '▶']
+            for reaction in reactions:
+                await playlist_msg.add_reaction(reaction)
+
+            def check(reaction, user):
+                return user == ctx.author and str(reaction.emoji) in ['◀', '▶']
+
+            async def reaction_menu(bot, ctx, message, pages, page):
+                try:
+                    reaction, user = await bot.wait_for('reaction_add', check=check, timeout=10)
+                    page_count = len(pages.keys())
+                    if str(reaction.emoji) == '▶':
+                        page += 1
+                        if page > page_count:
+                            page = 1
+                    elif str(reaction.emoji) == '◀':
+                        page -= 1
+                        if page < 1:
+                            page = page_count
+
+                    embed = discord.Embed(title='Playlists', colour=config.EMBED_COLOUR, description=pages[page], timestamp=datetime.datetime.now())
+                    embed.set_footer(text=f'{ctx.author} - Page {page}/{page_count}', icon_url=ctx.author.avatar_url)
+                    await message.edit(embed=embed)
+                    await bot.http.remove_reaction(ctx.channel.id, message.id, str(reaction.emoji), ctx.author.id)
+                    return await reaction_menu(bot, ctx, message, pages, page)
+                except asyncio.TimeoutError:
+                    return 'Timeout'
+
+            asyncio.create_task(reaction_menu(self.bot, ctx, playlist_msg, pages, page))
 
     @_playlist.command(name='save', help='Save a playlist, so you can get this playlist again later', usage='playlist save [name]',
-                      examples=['playlist save electro swing'], clearance='User', cls=command.Command)
+                       examples=['playlist save electro swing'], clearance='User', cls=command.Command)
     async def _playlist_save(self, ctx, *, name=None):
         if name is None:
             return await embed_maker.command_error(ctx)

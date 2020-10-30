@@ -58,7 +58,7 @@ class Muusik(commands.Bot):
         player = playlist.wavelink_client.get_player(guild_id)
 
         async def play_pause():
-            if not player.is_connected and playlist.queue:
+            if not player.is_connected and playlist.current_song:
                 voice_state = guild._voice_states.get(member.id, None)
                 if voice_state:
                     await player.connect(voice_state.channel.id)
@@ -67,7 +67,7 @@ class Muusik(commands.Bot):
             await player.set_pause(not player.is_paused)
 
         async def skip():
-            if not player.is_connected and playlist.current_song:
+            if not player.is_playing and playlist.current_song:
                 playlist.current_song = None
                 if playlist.queue:
                     playlist.current_song = playlist.queue[0]
