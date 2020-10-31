@@ -5,6 +5,8 @@ import traceback
 import math
 import wavelink
 import re
+import subprocess
+import time
 from cogs.music import Playlist, Song
 from modules import database, embed_maker
 from cogs.utils import get_user_clearance
@@ -21,11 +23,12 @@ class Muusik(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix=get_prefix, case_insensitive=True, help_command=None)
 
-        # start lavalink
-        self.lavalink_process = subprocess.Popen(['java', '-jar', 'Lavalink.jar'])
+        self.in_container = os.environ.get('IN_DOCKER', False)
+        if not self.in_container:
+            self.lavalink_process = subprocess.Popen(['java', '-jar', 'Lavalink.jar'])
+            # wait for lavalink to start
+            time.sleep(10)
 
-        # wait for lavalink to start
-        time.sleep(10)
         # Load Cogs
         for filename in os.listdir('./cogs'):
             if filename.endswith('.py'):
@@ -62,7 +65,8 @@ class Muusik(commands.Bot):
                 voice_state = guild._voice_states.get(member.id, None)
                 if voice_state:
                     await player.connect(voice_state.channel.id)
-                    return await player.play(playlist.current_song)
+                    await player.play(playlist.current_song)
+                    return await playlist.update_music_menu()
 
             await player.set_pause(not player.is_paused)
 
@@ -277,7 +281,9 @@ class Muusik(commands.Bot):
             await player.set_pause(True)
 
     async def close(self):
-        self.lavalink_process.kill()
+        if not self.in_container:
+            self.lavalink_process.kill()
+
         await super().close()
 
     def run(self):

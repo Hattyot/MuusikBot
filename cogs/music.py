@@ -129,17 +129,22 @@ class Playlist:
             await self.add(track_obj)
             return True
 
-    async def start_node(self):
+    async def start_node(self, attempts=1):
         await self.bot.wait_until_ready()
 
-        await self.wavelink_client.initiate_node(
-            host='127.0.0.1',
-            port=2333,
-            rest_uri='http://127.0.0.1:2333',
-            password='youshallnotpass',
-            identifier=f'MuusikBot-{self.guild.id}',
-            region=str(self.guild.region)
-        )
+        try:
+            await self.wavelink_client.initiate_node(
+                host=f'{config.LAVALINK_HOST}',
+                port=8080,
+                rest_uri=f'http://{config.LAVALINK_HOST}:8080',
+                password='youshallnotpass',
+                identifier=f'MuusikBot-{self.guild.id}',
+                region=str(self.guild.region)
+            )
+        except:
+            attempts += 1
+            await asyncio.sleep(5)
+            return await self.start_node(attempts+1)
 
     async def progress_bar(self, duration):
         self.old_progress_bar = ''
@@ -477,9 +482,11 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         player = playlist.wavelink_client.get_player(ctx.guild.id)
 
         if song_request is None:
-            if playlist.queue:
+            if playlist.current_song:
                 await ctx.invoke(self.join)
-                return await player.play(playlist.current_song)
+                await player.play(playlist.current_song)
+                return await playlist.update_music_menu()
+
             return await embed_maker.command_error(ctx)
 
         if not player.is_connected:
