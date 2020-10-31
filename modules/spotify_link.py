@@ -3,6 +3,7 @@ import time
 import re
 import asyncio
 import requests
+from modules import Playlist
 
 
 class SpotifyLink:
@@ -78,6 +79,12 @@ class SpotifyLink:
     async def fetch_track(self, index, track, tracks):
         track_name = track["name"]
         track_artists = [track["artists"][i]["name"] for i in range(len(track["artists"]))]
-        track_obj = await self.wavelink_client.get_tracks(f'ytsearch:{track_name} - {", ".join(track_artists)} song', retry_on_failure=True)
+        track_obj = await self.wavelink_client.get_tracks(f'ytsearch:{track_name} - {", ".join(track_artists)}', retry_on_failure=True)
         if track_obj:
-            tracks[index] = track_obj[0]
+            # search for song where duration difference is less than 1 min
+            for t in track_obj:
+                if abs(int(track['duration_ms']) - int(t.duration)) < 60 * 1000:
+                    song_obj = Playlist.Song(t)
+                    song_obj.custom_title = f'{track_name} - {track_artists[0]}'
+                    tracks[index] = song_obj
+                    return
