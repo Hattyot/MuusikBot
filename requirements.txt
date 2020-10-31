@@ -3,3 +3,4 @@ discord
 wavelink
 pymongo
 psutil
+youtube_title_parse
