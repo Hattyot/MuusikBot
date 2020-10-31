@@ -7,23 +7,23 @@ services:
       - ./application.yml:/opt/Lavalink/application.yaml
       - ./lavalink_logs:/opt/Lavalink/logs
     entrypoint: java -Xmx1G -jar Lavalink.jar
-  mongodb_container:
+  db:
     image: mongo:latest
     volumes:
       - mongodb_data_container:/data/db
     restart: always
     logging:
       driver: none
-  muusikbot:
+  bot:
     build:
       context: .
       dockerfile: Dockerfile
-    command: bash -c "sleep 10; python3.8 bot.py"
+    command: bash -c "sleep 20; python3.8 bot.py"
     depends_on:
-      - mongodb_container
+      - db
       - lavalink
     links:
-      - mongodb_container
+      - db
       - lavalink
 
 volumes:
