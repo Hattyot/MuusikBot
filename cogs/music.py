@@ -22,18 +22,46 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         playlist = self.bot.playlists[guild_id]
         player = playlist.wavelink_client.get_player(guild_id)
 
-        playlist.current_song = None
+        playlist.old_progress_bar = ''
+        if playlist.progress_bar_task:
+            playlist.progress_bar_task.cancel()
 
         await player.stop()
         await player.disconnect()
 
     @wavelink.WavelinkMixin.listener()
     async def on_track_end(self, node, payload):
+        if payload.reason == 'REPLACED':
+            return
+
         player = payload.player
         playlist = self.bot.playlists[player.guild_id]
 
-        playlist.current_song = None
+        playlist.history.append(playlist.current_song)
+        if len(playlist.history) > 20:
+            del playlist.history[0]
 
+        previous_song = playlist.current_song
+
+        playlist.old_progress_bar = ''
+        if playlist.progress_bar_task:
+            playlist.progress_bar_task.cancel()
+
+        if payload.reason == 'FINISHED':
+            # put the progress bar at the end and wait 2 seconds before the next song plays so it looks nicer
+            formatted_duration_length = len(format_time.ms(previous_song.duration, accuracy=3).split(' '))
+            formatted_position = format_time.ms(previous_song.duration, accuracy=3, progress_bar=formatted_duration_length)
+
+            line_str = list('-' * 40)
+            line_str[-1] = '●'
+            line_str = ''.join(line_str)
+
+            progress_bar_str = f'{formatted_position} [{line_str}] {formatted_position}'
+
+            await playlist.update_music_menu(current_progress=progress_bar_str)
+            await asyncio.sleep(2)
+
+        playlist.current_song = None
         return await playlist.next()
 
     @commands.command(help='Jump to a position in the currently playing song', usage='seek [timestamp]', examples=['seek 1m 20s'], clearance='User', cls=command.Command)
@@ -103,9 +131,9 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         player = playlist.wavelink_client.get_player(ctx.guild.id)
 
         playlist.current_song = None
-        # playlist.old_progress_bar = ''
-        # if playlist.progress_bar_task:
-        #     playlist.progress_bar_task.cancel()
+        playlist.old_progress_bar = ''
+        if playlist.progress_bar_task:
+            playlist.progress_bar_task.cancel()
 
         await player.stop()
         await player.disconnect()
@@ -254,7 +282,6 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
             return await embed_maker.message(ctx, f'Couldn\'t find a playlist by the name: `{name}`')
 
         songs = playlist_data['playlist']
-        tracks = []
         playlist = self.bot.playlists[ctx.guild.id]
         player = playlist.wavelink_client.get_player(ctx.guild.id)
         if not playlist.queue and not player.is_connected:
@@ -267,9 +294,13 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
             regex = r'https:\/\/(?:www)?.?([A-z]+)\.(?:com|tv)'
             track.type = re.findall(regex, track.uri)[0].capitalize()
 
-            tracks.append(track)
+            if i == 0:
+                playlist.current_song = track
+                continue
 
-        return await playlist.add(tracks)
+            playlist.queue.append(track)
+
+        await playlist.update_music_menu()
 
     @commands.command(help='search for a song', usage='search [query]', examples=['search jack stauber'], clearance='User', cls=command.Command)
     async def search(self, ctx, *, query=None):
@@ -461,10 +492,10 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
             except discord.HTTPException:
                 pass
 
-        menu_embed = discord.Embed(colour=config.EMBED_COLOUR)
+        music_menu_str = '**Currently Playing:**\n\n**Queue:**\n\n\u200bSongs in queue: **0**\nPlaylist duration: **0ms**\nLoop: **True**'
+
+        menu_embed = discord.Embed(colour=config.EMBED_COLOUR, description=music_menu_str)
         menu_embed.set_author(name='Playlist', icon_url=ctx.guild.icon_url)
-        menu_embed.add_field(name='Currently Playing:', value='\u200b', inline=False)
-        menu_embed.add_field(name='Queue:', value=f'\u200b\n\nSongs in queue: **0**\nPlaylist duration: **0ms**\nLoop: **True**', inline=False)
         menu_embed.set_footer(text='Page 1/1')
         menu_embed_msg = await ctx.send(embed=menu_embed, nonce=10)
 
@@ -472,7 +503,7 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         playlist.music_menu = menu_embed_msg
 
         db.dj.update_one({'guild_id': ctx.guild.id}, {'$set': {'music_menu_message_id': menu_embed_msg.id}})
-        reactions = ['⏯', '⏩', '<:blank1:763115899099021323>', '🔄', '🔀', '<:blank2:763115938291253248>', '◀', '▶']
+        reactions = ['⏯', '⏪', '⏩', '<:blank1:763115899099021323>', '🔄', '🔀', '<:blank2:763115938291253248>', '◀', '▶']
         for reaction in reactions:
             await menu_embed_msg.add_reaction(reaction)
 
