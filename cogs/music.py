@@ -77,15 +77,19 @@ class Playlist:
             queue_len = len(self.queue)
             self.queue += [0] * len(tracks)
             should_play = self.current_song is None
+
             for i, track in enumerate(tracks):
                 future = asyncio.ensure_future(self.fetch_track(i, queue_len, track, requester))
                 futures.append(future)
 
-            await asyncio.gather(*futures, return_exceptions=True)
+            await asyncio.gather(*futures)
+
             self.queue = [s for s in self.queue if s]
             db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': [(self.current_song.id, self.current_song.requester)] + [(s.id, s.requester) for s in self.queue]}})
+
             if should_play:
                 await self.wavelink_client.get_player(self.guild.id).play(self.current_song)
+
             await self.update_music_menu()
             return True
 
@@ -382,10 +386,16 @@ class Playlist:
         await self.update_music_menu()
 
     async def clear(self):
+        self.current_song = None
+        self.queue = []
+        db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': []}})
+        await self.update_music_menu()
+
+    async def clear_queue(self):
         self.queue = []
         pl = [(self.current_song.id, self.current_song.requester)] if self.current_song else []
         db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': pl}})
-        await self.update_music_menu()
+        await  self.update_music_menu()
 
 
 class Song(wavelink.Track):
@@ -770,10 +780,15 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
 
         return await ctx.message.add_reaction('👍')
 
-    @commands.command(help='Clear the queue', usage='clear', examples=['clear'], clearance='User', cls=command.Command)
-    async def clear(self, ctx):
+    @commands.command(help='Clear the playlist or only the queue', usage='clear (queue ?)', examples=['clear', 'clear q'], clearance='User', cls=command.Command)
+    async def clear(self, ctx, queue=None):
         playlist = self.bot.playlists[ctx.guild.id]
-        await playlist.clear()
+        player = playlist.wavelink_client.get_player(ctx.guild.id)
+        if queue:
+            await playlist.clear_queue()
+        else:
+            await playlist.clear()
+            await player.stop()
 
         return await ctx.message.add_reaction('👍')
 
@@ -828,12 +843,13 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         old_message_id = dj_data['music_menu_message_id']
         db.dj.update_one({'guild_id': ctx.guild.id}, {'$set': {'music_menu_channel_id': channel.id}})
         old_channel = ctx.guild.get_channel(old_channel_id)
-        try:
-            old_message = await old_channel.fetch_message(old_message_id)
-            if old_message:
-                await old_message.delete()
-        except discord.HTTPException:
-            pass
+        if old_channel:
+            try:
+                old_message = await old_channel.fetch_message(old_message_id)
+                if old_message:
+                    await old_message.delete()
+            except discord.HTTPException:
+                pass
 
         menu_embed = discord.Embed(colour=config.EMBED_COLOUR)
         menu_embed.set_author(name='Playlist', icon_url=ctx.guild.icon_url)

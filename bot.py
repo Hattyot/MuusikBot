@@ -97,8 +97,8 @@ class Muusik(commands.Bot):
         async def back_page():
             current_page = playlist.music_menu_page
             new_page = current_page - 1
-            if new_page < 1:
-                pc = page_count(playlist)
+            pc = page_count(playlist)
+            if new_page < 1 or new_page > pc:
                 new_page = pc
 
             await playlist.update_music_menu(page=new_page)
@@ -242,6 +242,7 @@ class Muusik(commands.Bot):
                         music_menu = await channel.fetch_message(music_menu_message_id)
                     except discord.HTTPException:
                         db.dj.update_one({'guild_id': guild.id}, {'$set': {'music_menu_channel_id': 0, 'music_menu_message_id': 0}})
+                        self.playlists[guild.id].music_menu = None
                         return
 
                     playlist = self.playlists[guild.id]
