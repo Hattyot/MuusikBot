@@ -318,7 +318,7 @@ class Playlist:
 
     async def add(self, song, requester=None):
         player = self.wavelink_client.get_player(self.guild.id)
-
+        db.timers.delete_one({'guild_id': self.guild.id, 'event': 'leave_vc'})
         if type(song) == list:
             if requester:
                 song_list = [Song(s) for s in song]
@@ -353,6 +353,11 @@ class Playlist:
         previous_song = self.queue[0] if self.queue else None
         if len(self.queue) == 0:
             db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': []}})
+
+            # start 5 min timer to leave vc
+            utils_cog = self.bot.get_cog('Utils')
+            await utils_cog.create_timer(guild_id=self.guild.id, expires=round(time.time()) + 300, event='leave_vc')
+
             await self.update_music_menu()
             return None
 
@@ -393,6 +398,20 @@ class Song(wavelink.Track):
 class Music(commands.Cog, wavelink.WavelinkMixin):
     def __init__(self, bot):
         self.bot = bot
+
+    @commands.Cog.listener()
+    async def on_leave_vc_timer_over(self, timer):
+        guild_id = timer['guild_id']
+        playlist = self.bot.playlists[guild_id]
+        player = playlist.wavelink_client.get_player(guild_id)
+
+        playlist.current_song = None
+        playlist.old_progress_bar = ''
+        if playlist.progress_bar_task:
+            playlist.progress_bar_task.cancel()
+
+        await player.stop()
+        await player.disconnect()
 
     @wavelink.WavelinkMixin.listener()
     async def on_track_end(self, node, payload):

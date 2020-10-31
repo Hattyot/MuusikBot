@@ -222,6 +222,11 @@ class Muusik(commands.Bot):
         await self.change_presence(activity=bot_game)
 
         print(f'{self.user} is ready')
+        db.timers.delete_many({'event': 'leave_vc'})
+
+        # run old timers
+        utils_cog = self.get_cog('Utils')
+        await utils_cog.run_old_timers()
 
         for guild in self.guilds:
             self.playlists[guild.id] = Playlist(self, guild, self.wavelink)

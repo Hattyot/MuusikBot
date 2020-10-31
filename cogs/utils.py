@@ -137,7 +137,7 @@ class Utils(commands.Cog):
             'guild_id': kwargs['guild_id'],
             'expires': kwargs['expires'],
             'event': kwargs['event'],
-            'extras': kwargs['extras']
+            'extras': kwargs.get('extras', {})
         }
 
         db.timers.insert_one(timer_dict)

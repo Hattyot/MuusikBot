@@ -1,5 +1,16 @@
+import os
+
+
 BOT_TOKEN = ''
-MONGODB_URL = 'mongodb://127.0.0.1:27017'
+
+in_container = os.environ.get('IN_DOCKER', False)
+if not in_container:
+    MONGODB_URL = 'mongodb://127.0.0.1:27017'
+    LAVALINK_HOST = '127.0.0.1'
+else:
+    MONGODB_URL = 'mongodb://mongodb_container:27017'
+    LAVALINK_HOST = 'lavalink'
+
 PREFIX = '>'
 EMBED_COLOUR = 0x00a6ad
 DEV_IDS = []
