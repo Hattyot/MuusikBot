@@ -4,7 +4,6 @@ s = 1000
 m = s * 60
 h = m * 60
 d = h * 24
-w = d * 7
 
 
 def ms(ms, *, accuracy=2, progress_bar=0):
@@ -36,3 +35,13 @@ def ms(ms, *, accuracy=2, progress_bar=0):
     add(parsed['m'], "m", 2)
     add(parsed['s'], "s", 1)
     return ' '.join(ret)
+
+
+def to_ms(timestamp):
+    sections = timestamp.split(' ')
+
+    total_time = 0
+    for section in sections:
+        total_time += int(section[:-1]) * globals()[section[-1]]
+
+    return total_time
