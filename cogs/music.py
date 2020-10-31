@@ -1,408 +1,15 @@
 import discord.utils
-import random
 import math
 import wavelink
 import asyncio
 import re
 import config
 import datetime
-import base64
-import requests
-import time
 from discord.ext import commands
 from modules import embed_maker, command, format_time, database
+from modules.Playlist import Song
 
 db = database.Connection()
-
-
-class Playlist:
-    def __init__(self, bot, guild, wavelink_client):
-        self.bot = bot
-        self.guild = guild
-        self.current_song = None
-
-        self.queue = []
-        self.loop = False
-
-        self.music_menu = None
-
-        self.old_queue_str = '\u200b'
-        self.old_currently_playing_str = '\u200b'
-        self.old_page_count = 1
-        self.music_menu_page = 1
-        self.old_progress_bar = ''
-
-        self.progress_bar_task = None
-
-        self.wavelink_client = wavelink_client
-        self.bot.loop.create_task(self.start_node())
-
-        # Spotify
-        self.spotify_id = config.SPOTIFY_CLIENT_ID
-        self.spotify_secret = config.SPOTIFY_CLIENT_SECRET
-        self.headers = {}
-        self.data = {}
-        self.token = ""
-        self.token_expire = 0
-
-    async def renew_spotify_token(self):
-        url = "https://accounts.spotify.com/api/token"
-        auth = base64.b64encode(f'{self.spotify_id}:{self.spotify_secret}'.encode('ascii')).decode('ascii')
-        headers = {'Authorization': f'Basic {auth}'}
-        data = {'grant_type': "client_credentials"}
-        response = requests.post(url, headers=headers, data=data)
-        response_json = response.json()
-
-        self.token = response_json['access_token']
-        self.token_expire = time.time() + response_json['expires_in']
-
-    async def process_spotify_playlist(self, playlist_url, requester):
-        playlist_id = re.findall(r'/playlist/(.*)', playlist_url)
-        if not playlist_id:
-            return
-
-        playlist_id = playlist_id[0].strip()
-        if config.SPOTIFY_CLIENT_ID and self.token_expire <= time.time():
-            await self.renew_spotify_token()
-            if not self.token or self.token_expire <= time.time():
-                return
-
-        headers = {'Authorization': f'Bearer {self.token}'}
-        url = f'https://api.spotify.com/v1/playlists/{playlist_id}/tracks?offset=0&limit=250'
-
-        response = requests.get(url, headers=headers).json()
-        if 'tracks' in response and response['tracks']:
-            tracks = response['tracks']['items']
-            futures = []
-            queue_len = len(self.queue)
-            self.queue += [0] * len(tracks)
-            should_play = self.current_song is None
-
-            for i, track in enumerate(tracks):
-                future = asyncio.ensure_future(self.fetch_track(i, queue_len, track, requester))
-                futures.append(future)
-
-            await asyncio.gather(*futures)
-
-            self.queue = [s for s in self.queue if s]
-            db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': [(self.current_song.id, self.current_song.requester)] + [(s.id, s.requester) for s in self.queue]}})
-
-            if should_play:
-                await self.wavelink_client.get_player(self.guild.id).play(self.current_song)
-
-            await self.update_music_menu()
-            return True
-
-    async def fetch_track(self, index, queue_len, track, requester):
-        track_name = track["track"]["name"]
-        track_artist = track["track"]["artists"][0]["name"]
-        track_uri = track["track"]['external_urls']['spotify']
-        track_obj = await self.wavelink_client.get_tracks(f'ytsearch:{track_name} - {track_artist}', retry_on_failure=True)
-        if track_obj:
-            track_obj = Song(track_obj[0], requester=requester, song_type=re.findall(r'https:\/\/(?:www)?.?([A-z]+)\.(?:com|tv)', track_obj[0].uri)[0].capitalize())
-            track_obj.custom_name = track_artist
-            track_obj.custom_uri = track_uri
-            if index == 0 and self.current_song is None:
-                self.current_song = track_obj
-            else:
-                self.queue[queue_len + index] = track_obj
-
-    async def process_spotify_track(self, track_url, requester):
-        track_id = re.findall(r'/track/(.*)', track_url)
-        if not track_id:
-            return
-
-        playlist_id = track_id[0].strip()
-        if config.SPOTIFY_CLIENT_ID and self.token_expire <= time.time():
-            await self.renew_spotify_token()
-            if not self.token or self.token_expire <= time.time():
-                return
-
-        headers = {'Authorization': f'Bearer {self.token}'}
-        url = f'https://api.spotify.com/v1/tracks/{playlist_id}'
-
-        track = requests.get(url, headers=headers).json()
-        if not track:
-            return
-
-        track_obj = await self.wavelink_client.get_tracks(f'ytsearch:{track["name"]} - {track["artists"][0]["name"]}', retry_on_failure=True)
-        if track_obj:
-            track_obj = Song(track_obj[0], requester=requester, song_type=re.findall(r'https:\/\/(?:www)?.?([A-z]+)\.(?:com|tv)', track_obj[0].uri)[0].capitalize())
-            track_obj.custom_name = track["name"]
-            track_obj.custom_uri = track['external_urls']['spotify']
-            await self.add(track_obj)
-            return True
-
-    async def start_node(self, attempts=1):
-        await self.bot.wait_until_ready()
-
-        try:
-            await self.wavelink_client.initiate_node(
-                host=f'{config.LAVALINK_HOST}',
-                port=8080,
-                rest_uri=f'http://{config.LAVALINK_HOST}:8080',
-                password='youshallnotpass',
-                identifier=f'MuusikBot-{self.guild.id}',
-                region=str(self.guild.region)
-            )
-        except:
-            attempts += 1
-            await asyncio.sleep(5)
-            return await self.start_node(attempts+1)
-
-    async def progress_bar(self, duration):
-        self.old_progress_bar = ''
-        current_position = 0
-        formatted_duration_length = len(format_time.ms(duration, accuracy=3).split(' '))
-        formatted_duration = format_time.ms(duration, accuracy=3, progress_bar=formatted_duration_length)
-
-        part_duration = duration // 40
-        equal_segments = [range(i * part_duration, (i + 1) * part_duration) for i in range(40)]
-
-        player = self.wavelink_client.get_player(self.guild.id)
-
-        while current_position < duration:
-            if player.is_paused:
-                await asyncio.sleep(5)
-                continue
-
-            current_position = 5000 * round(player.position / 5000)
-
-            pos_range = [r for r in equal_segments if current_position in r]
-            if not pos_range:
-                return
-
-            position_index = equal_segments.index(pos_range[0])
-            formatted_position = format_time.ms(current_position, accuracy=3, progress_bar=formatted_duration_length)
-
-            line_str = list('-' * 40)
-            line_str[position_index] = '●'
-            line_str = ''.join(line_str)
-
-            progress_bar_str = f'{formatted_position} |{line_str}| {formatted_duration}'
-
-            if self.old_progress_bar == progress_bar_str:
-                await asyncio.sleep(5)
-                continue
-
-            self.old_progress_bar = progress_bar_str
-
-            await self.update_music_menu(current_progress=progress_bar_str)
-            await asyncio.sleep(5)
-
-    async def update_music_menu(self, page=0, queue_length=5, current_progress=None):
-        if not self.music_menu:
-            return
-
-        if not current_progress:
-            current_progress = self.old_progress_bar
-
-        current_song = self.current_song
-
-        if not page and not self.music_menu_page:
-            page = 1
-        elif not page and self.music_menu_page:
-            page = self.music_menu_page
-
-        self.music_menu_page = page
-
-        queue_segment = self.queue[((page - 1) * queue_length):(page * queue_length)]
-
-        if current_song:
-            song_type = current_song.type
-            currently_playing_str = f'**{song_type}:** ' if song_type != 'Youtube' else ''
-            currently_playing_str += f'[{current_song.title}]({current_song.uri})'
-
-            if song_type != 'Twitch':
-                formatted_duration = format_time.ms(current_song.duration, accuracy=3)
-                currently_playing_str += f' | `{formatted_duration}`'
-
-            currently_playing_str += f' - <@{current_song.requester}>'
-
-            if song_type != 'Twitch':
-                if not current_progress:
-                    if self.progress_bar_task:
-                        self.progress_bar_task.cancel()
-                    self.progress_bar_task = asyncio.create_task(self.progress_bar(current_song.duration))
-                    return
-                else:
-                    currently_playing_str += f'\n{current_progress}'
-
-        else:
-            currently_playing_str = '\u200b'
-
-        queue_str = []
-        for i, song in enumerate(queue_segment):
-            song_type = song.type
-            value = f'`#{(i + 1) + 5 * (page - 1)}` - '
-            value += f'**{song_type}:** ' if song_type != 'Youtube' else ''
-            value += f'[{song.title}]({song.uri})'
-
-            if song_type != 'Twitch':
-                formatted_duration = format_time.ms(song.duration, accuracy=3)
-                value += f' | `{formatted_duration}`'
-            value += f' - <@{song.requester}>'
-            queue_str.append(value)
-
-        queue_str = '\n'.join(queue_str) if queue_str else '\u200b'
-
-        if len(queue_str) >= 1024:
-            return await self.update_music_menu(page, queue_length-1)
-
-        if not queue_str:
-            queue_str = self.old_queue_str
-
-        if not currently_playing_str:
-            currently_playing_str = self.old_currently_playing_str
-
-        page_count = math.ceil(len(self) / queue_length)
-        if page_count == 0:
-            page_count = 1
-
-        self.old_queue_str = queue_str
-        self.old_currently_playing_str = currently_playing_str
-        self.old_page_count = page_count
-
-        total_duration = sum([s.duration for s in self.queue])
-
-        total_duration_formatted = format_time.ms(total_duration, accuracy=4)
-        if self.current_song and self.current_song.type == 'Twitch':
-            total_duration_formatted = '∞'
-
-        queue_str += f'\n\nSongs in queue: **{len(self)}**\nPlaylist duration: **{total_duration_formatted}**\nLoop: **{self.loop}**'
-
-        new_embed = self.music_menu.embeds[0]
-        new_embed.set_field_at(0, name='Currently Playing:', value=currently_playing_str, inline=False)
-        new_embed.set_field_at(1, name='Queue:', value=queue_str, inline=False)
-        new_embed.set_footer(text=f'Page {page}/{page_count}')
-        await self.music_menu.edit(embed=new_embed)
-        return True
-
-    async def process_song(self, query, requester):
-        is_url = query.startswith('https://')
-        is_playlist = is_url and '&list=' in query
-
-        if is_url:
-            if 'https://open.spotify.com' in query:
-                is_spotify_playlist = '/playlist/' in query
-                if is_spotify_playlist:
-                    response = await self.process_spotify_playlist(query, requester)
-                    if not response:
-                        return 'Invalid spotify playlist url'
-                    else:
-                        return
-                else:
-                    response = await self.process_spotify_track(query, requester)
-                    if not response:
-                        return 'Invalid spotify song url'
-                    else:
-                        return
-
-            songs_data = await self.wavelink_client.get_tracks(f'{query}', retry_on_failure=True)
-            if not songs_data:
-                return f"Invalid url: {query}"
-
-            if is_playlist:
-                return await self.add(songs_data.tracks, requester)
-
-            song = songs_data[0]
-        else:
-            songs_data = await self.wavelink_client.get_tracks(f'ytsearch:{query}', retry_on_failure=True)
-
-            if not songs_data:
-                return f"Couldn't find any matches for: {query}"
-
-            song = songs_data[0]
-
-        await self.add(song, requester)
-        await self.update_music_menu()
-
-    def __len__(self):
-        return len(self.queue)
-
-    async def add(self, song, requester=None):
-        player = self.wavelink_client.get_player(self.guild.id)
-        db.timers.delete_one({'guild_id': self.guild.id, 'event': 'leave_vc'})
-        if type(song) == list:
-            if requester:
-                song_list = [Song(s) for s in song]
-            else:
-                song_list = song
-        elif not requester:
-            song_list = [song]
-        else:
-            song_list = [Song(song)]
-
-        if requester:
-            for s in song_list:
-                regex = r'https:\/\/(?:www)?.?([A-z]+)\.(?:com|tv)'
-                s.type = re.findall(regex, s.uri)[0].capitalize()
-                s.requester = requester
-
-        first_song = song_list.pop(0)
-
-        if self.current_song is None:
-            self.current_song = first_song
-            self.old_progress_bar = ''
-            if player.is_connected:
-                await player.play(first_song)
-
-        self.queue += song_list
-
-        db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': [(self.current_song.id, self.current_song.requester)] + [(s.id, s.requester) for s in self.queue]}})
-
-        return await self.update_music_menu()
-
-    async def next(self):
-        previous_song = self.queue[0] if self.queue else None
-        if len(self.queue) == 0:
-            db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': []}})
-
-            # start 5 min timer to leave vc
-            utils_cog = self.bot.get_cog('Utils')
-            await utils_cog.create_timer(guild_id=self.guild.id, expires=round(time.time()) + 300, event='leave_vc')
-
-            await self.update_music_menu()
-            return None
-
-        if self.loop:
-            self.queue.append(previous_song)
-
-        next_song = self.queue.pop(0)
-        db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': [(next_song.id, next_song.requester)] + [(s.id, s.requester) for s in self.queue]}})
-        self.current_song = next_song
-        await self.update_music_menu()
-
-        player = self.wavelink_client.get_player(self.guild.id)
-        await player.play(next_song)
-
-    async def shuffle(self):
-        first = [self.queue[0]]
-        to_shuffle = self.queue[1:]
-        random.shuffle(to_shuffle)
-        self.queue = first + to_shuffle
-
-        db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': [(self.current_song.id, self.current_song.requester)] + [(s.id, s.requester) for s in self.queue]}})
-        await self.update_music_menu()
-
-    async def clear(self):
-        self.current_song = None
-        self.queue = []
-        db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': []}})
-        await self.update_music_menu()
-
-    async def clear_queue(self):
-        self.queue = []
-        pl = [(self.current_song.id, self.current_song.requester)] if self.current_song else []
-        db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': pl}})
-        await  self.update_music_menu()
-
-
-class Song(wavelink.Track):
-    def __init__(self, song, song_type=None, requester=None):
-        super().__init__(song.id, song.info, song.query)
-        self.type = song_type
-        self.requester = requester
 
 
 class Music(commands.Cog, wavelink.WavelinkMixin):
@@ -416,9 +23,6 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         player = playlist.wavelink_client.get_player(guild_id)
 
         playlist.current_song = None
-        playlist.old_progress_bar = ''
-        if playlist.progress_bar_task:
-            playlist.progress_bar_task.cancel()
 
         await player.stop()
         await player.disconnect()
@@ -428,29 +32,36 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         player = payload.player
         playlist = self.bot.playlists[player.guild_id]
 
-        previous_song = playlist.current_song
-
-        playlist.old_progress_bar = ''
-        if playlist.progress_bar_task:
-            playlist.progress_bar_task.cancel()
-
-        if payload.reason == 'FINISHED':
-            # put the progress bar at the end and wait 2 seconds before the next song plays so it looks nicer
-            formatted_duration_length = len(format_time.ms(previous_song.duration, accuracy=3).split(' '))
-            formatted_position = format_time.ms(previous_song.duration, accuracy=3, progress_bar=formatted_duration_length)
-
-            line_str = list('-' * 40)
-            line_str[-1] = '●'
-            line_str = ''.join(line_str)
-
-            progress_bar_str = f'{formatted_position} |{line_str}| {formatted_position}'
-
-            await playlist.update_music_menu(current_progress=progress_bar_str)
-            await asyncio.sleep(2)
-
         playlist.current_song = None
 
         return await playlist.next()
+
+    @commands.command(help='Jump to a position in the currently playing song', usage='seek [timestamp]', examples=['seek 1m 20s'], clearance='User', cls=command.Command)
+    async def seek(self, ctx, *, new_position=None):
+        if new_position is None:
+            return await embed_maker.command_error(ctx)
+
+        playlist = self.bot.playlists[ctx.guild.id]
+        player = playlist.wavelink_client.get_player(ctx.guild.id)
+
+        if not playlist.current_song:
+            return await embed_maker.message(ctx, 'Nothing is playing currently', colour='red')
+
+        if await self.check_voice(ctx):
+            return
+
+        correct_format = re.findall(r'((?:\d+h)? ?(?:\d+m)? ?(?:\d+s))', new_position)
+        if not correct_format:
+            return await embed_maker.message(ctx, 'Invalid timestamp format', colour='red')
+
+        new_position = format_time.to_ms(timestamp=correct_format[0])
+        duration = playlist.current_song.duration
+
+        if new_position > duration:
+            return await embed_maker.message(ctx, 'timestamp further than duration of song', colour='red')
+
+        await player.seek(new_position)
+        return await ctx.message.add_reaction('👍')
 
     @commands.command(help='Change the volume of the bot', usage='volume [0-100]', examples=['volume 70'], clearance='User', cls=command.Command)
     async def volume(self, ctx, new_volume=None):
@@ -480,11 +91,8 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         playlist = self.bot.playlists[ctx.guild.id]
         player = playlist.wavelink_client.get_player(ctx.guild.id)
 
-        try:
-            await player.connect(voice_channel.id)
-            return await embed_maker.message(ctx, f'Joined channel: **{voice_channel.name}**', colour='green', timestamp=None), 0
-        except:
-            return await embed_maker.message(ctx, 'Unable to connect to voice channel', colour='red', timestamp=None), 1
+        await player.connect(voice_channel.id)
+        return await embed_maker.message(ctx, f'Joined channel: **{voice_channel.name}**', colour='green', timestamp=None), 0
 
     @commands.command(help='Make the bot leave the voice channel', usage='leave', examples=['leave'], clearance='User', cls=command.Command)
     async def leave(self, ctx):
@@ -495,9 +103,9 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         player = playlist.wavelink_client.get_player(ctx.guild.id)
 
         playlist.current_song = None
-        playlist.old_progress_bar = ''
-        if playlist.progress_bar_task:
-            playlist.progress_bar_task.cancel()
+        # playlist.old_progress_bar = ''
+        # if playlist.progress_bar_task:
+        #     playlist.progress_bar_task.cancel()
 
         await player.stop()
         await player.disconnect()
@@ -563,31 +171,31 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
             for reaction in reactions:
                 await playlist_msg.add_reaction(reaction)
 
-            def check(reaction, user):
-                return user == ctx.author and str(reaction.emoji) in ['◀', '▶']
+            def check(r, user):
+                return user == ctx.author and str(r.emoji) in ['◀', '▶']
 
-            async def reaction_menu(bot, ctx, message, pages, page):
+            async def reaction_menu(bot, message, menu_page):
                 try:
-                    reaction, user = await bot.wait_for('reaction_add', check=check, timeout=10)
+                    r, user = await bot.wait_for('reaction_add', check=check, timeout=10)
                     page_count = len(pages.keys())
-                    if str(reaction.emoji) == '▶':
-                        page += 1
-                        if page > page_count:
-                            page = 1
-                    elif str(reaction.emoji) == '◀':
-                        page -= 1
-                        if page < 1:
-                            page = page_count
+                    if str(r.emoji) == '▶':
+                        menu_page += 1
+                        if menu_page > page_count:
+                            menu_page = 1
+                    elif str(r.emoji) == '◀':
+                        menu_page -= 1
+                        if menu_page < 1:
+                            menu_page = page_count
 
-                    embed = discord.Embed(title='Playlists', colour=config.EMBED_COLOUR, description=pages[page], timestamp=datetime.datetime.now())
-                    embed.set_footer(text=f'{ctx.author} - Page {page}/{page_count}', icon_url=ctx.author.avatar_url)
-                    await message.edit(embed=embed)
-                    await bot.http.remove_reaction(ctx.channel.id, message.id, str(reaction.emoji), ctx.author.id)
-                    return await reaction_menu(bot, ctx, message, pages, page)
+                    menu_embed = discord.Embed(title='Playlists', colour=config.EMBED_COLOUR, description=pages[menu_page], timestamp=datetime.datetime.now())
+                    menu_embed.set_footer(text=f'{ctx.author} - Page {page}/{page_count}', icon_url=ctx.author.avatar_url)
+                    await message.edit(embed=menu_embed)
+                    await bot.http.remove_reaction(ctx.channel.id, message.id, str(r.emoji), ctx.author.id)
+                    return await reaction_menu(bot, message, page)
                 except asyncio.TimeoutError:
                     return 'Timeout'
 
-            asyncio.create_task(reaction_menu(self.bot, ctx, playlist_msg, pages, page))
+            asyncio.create_task(reaction_menu(self.bot, playlist_msg, page))
 
     @_playlist.command(name='save', help='Save a playlist, so you can get this playlist again later', usage='playlist save [name]',
                        examples=['playlist save electro swing'], clearance='User', cls=command.Command)
@@ -690,7 +298,9 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         search_str += '**Pick a song by typing its number.** Type cancel to exit.'
         search_msg = await embed_maker.message(ctx, search_str, nonce=10)
 
-        check = lambda m: m.channel.id == ctx.channel.id and m.author.id == ctx.author.id
+        def check(m):
+            return m.channel.id == ctx.channel.id and m.author.id == ctx.author.id
+
         try:
             msg = await self.bot.wait_for('message', check=check)
             content = msg.content

@@ -69,6 +69,7 @@ class Muusik(commands.Bot):
                     return await playlist.update_music_menu()
 
             await player.set_pause(not player.is_paused)
+            await playlist.update_music_menu()
 
         async def skip():
             if not player.is_playing and playlist.current_song:
