@@ -7,7 +7,7 @@ import wavelink
 import re
 import subprocess
 import time
-from cogs.music import Playlist, Song
+from modules.Playlist import Playlist, Song
 from modules import database, embed_maker
 from cogs.utils import get_user_clearance
 from discord.ext import commands
@@ -27,7 +27,7 @@ class Muusik(commands.Bot):
         if not self.in_container:
             self.lavalink_process = subprocess.Popen(['java', '-jar', 'Lavalink.jar'])
             # wait for lavalink to start
-            time.sleep(10)
+            time.sleep(20)  # TODO: probably should make this smarter by pining the url of lavalink rather than waiting
 
         # Load Cogs
         for filename in os.listdir('./cogs'):
@@ -71,12 +71,28 @@ class Muusik(commands.Bot):
             await player.set_pause(not player.is_paused)
             await playlist.update_music_menu()
 
+        async def backwards():
+            if playlist.history:
+                if playlist.current_song:
+                    playlist.queue = [playlist.current_song] + playlist.queue
+
+                new_current = playlist.history.pop(-1)
+                playlist.current_song = new_current
+                playlist.update_dj_db()
+                await playlist.update_music_menu()
+                if player.is_connected:
+                    await player.play(playlist.current_song)
+
         async def skip():
-            if not player.is_playing and playlist.current_song:
+            if not player.is_connected and playlist.current_song:
+                playlist.history.append(playlist.current_song)
+                if len(playlist.history) > 20:
+                    del playlist.history[0]
+
                 playlist.current_song = None
                 if playlist.queue:
                     playlist.current_song = playlist.queue[0]
-                    db.dj.update_one({'guild_id': guild.id}, {'$set': {'playlist': [(s.id, s.requester) for s in playlist.queue]}})
+                    playlist.update_dj_db()
                     del playlist.queue[0]
                 return await playlist.update_music_menu()
 
@@ -115,6 +131,7 @@ class Muusik(commands.Bot):
 
         emote_functions = {
             '⏯': play_pause,
+            '⏪': backwards,
             '⏩': skip,
             '🔄': loop,
             '🔀': shuffle,
@@ -254,11 +271,13 @@ class Muusik(commands.Bot):
                     if 'playlist' in dj_data:
                         songs = dj_data['playlist']
                         for i, song in enumerate(songs):
-                            song_id, requester = song
+                            song_id, requester, custom_title = song
                             track = Song(await self.wavelink.build_track(song_id), requester=requester)
 
                             regex = r'https:\/\/(?:www)?.?([A-z]+)\.(?:com|tv)'
                             track.type = re.findall(regex, track.uri)[0].capitalize()
+                            if custom_title:
+                                track.custom_title = custom_title
 
                             if i == 0:
                                 playlist.current_song = track
@@ -267,6 +286,17 @@ class Muusik(commands.Bot):
                             playlist.queue.append(track)
 
                     await playlist.update_music_menu()
+
+                    if 'history' in dj_data:
+                        history_songs = dj_data['history']
+                        for song in history_songs:
+                            song_id, requester, custom_title = song
+                            track = Song(await self.wavelink.build_track(song_id), requester=requester)
+                            regex = r'https:\/\/(?:www)?.?([A-z]+)\.(?:com|tv)'
+                            track.type = re.findall(regex, track.uri)[0].capitalize()
+                            if custom_title:
+                                track.custom_title = custom_title
+                            playlist.history.append(track)
 
     async def on_voice_state_update(self, member, before, after):
         voice_channel = before.channel
