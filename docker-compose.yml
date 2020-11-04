@@ -6,7 +6,7 @@ services:
     volumes:
       - ./application.yml:/opt/Lavalink/application.yaml
       - ./lavalink_logs:/opt/Lavalink/logs
-    entrypoint: java -Xmx1G -jar Lavalink.jar
+    entrypoint: java -Xmx2G -jar Lavalink.jar
   db:
     image: mongo:latest
     volumes:
