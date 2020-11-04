@@ -85,10 +85,7 @@ class Muusik(commands.Bot):
 
         async def skip():
             if not player.is_connected and playlist.current_song:
-                playlist.history.append(playlist.current_song)
-                if len(playlist.history) > 20:
-                    del playlist.history[0]
-
+                playlist.add_to_history([playlist.current_song])
                 playlist.current_song = None
                 if playlist.queue:
                     playlist.current_song = playlist.queue[0]

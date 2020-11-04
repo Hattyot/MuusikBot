@@ -37,10 +37,7 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         player = payload.player
         playlist = self.bot.playlists[player.guild_id]
 
-        playlist.history.append(playlist.current_song)
-        if len(playlist.history) > 20:
-            del playlist.history[0]
-
+        playlist.add_to_history([playlist.current_song])
         previous_song = playlist.current_song
 
         playlist.old_progress_bar = ''
@@ -52,17 +49,47 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
             formatted_duration_length = len(format_time.ms(previous_song.duration, accuracy=3).split(' '))
             formatted_position = format_time.ms(previous_song.duration, accuracy=3, progress_bar=formatted_duration_length)
 
-            line_str = list('-' * 40)
-            line_str[-1] = '●'
-            line_str = ''.join(line_str)
-
-            progress_bar_str = f'{formatted_position} [{line_str}] {formatted_position}'
+            line_str = '■' * 25
+            progress_bar_str = f'`{formatted_position} [{line_str}] {formatted_position}`'
 
             await playlist.update_music_menu(current_progress=progress_bar_str)
             await asyncio.sleep(2)
 
         playlist.current_song = None
         return await playlist.next()
+
+    @commands.command(help='skip to a song in the queue', usage='skip_to [song nr in the queue]', examples=['skip_to 10'], clearance='User', cls=command.Command)
+    async def skip_to(self, ctx, *, song_nr=None):
+        if song_nr is None:
+            return await embed_maker.command_error(ctx)
+
+        if not song_nr.isdigit():
+            return await embed_maker.message(ctx, 'Invalid song number', colour='red')
+
+        playlist = self.bot.playlists[ctx.guild.id]
+        player = playlist.wavelink_client.get_player(ctx.guild.id)
+
+        song_nr = int(song_nr)
+        if song_nr > len(playlist) or song_nr < 1:
+            return await embed_maker.message(ctx, 'Invalid song number', colour='red')
+
+        playlist.add_to_history(playlist.queue[:song_nr-1])
+        playlist.queue = playlist.queue[song_nr-1:]
+        playlist.update_dj_db()
+        if player.is_connected:
+            await playlist.update_music_menu()
+            await player.stop()
+        else:
+            playlist.add_to_history([playlist.current_song])
+            playlist.current_song = None
+            if playlist.queue:
+                playlist.current_song = playlist.queue[0]
+                playlist.update_dj_db()
+                del playlist.queue[0]
+
+            await playlist.update_music_menu()
+
+        return await ctx.message.add_reaction('👍')
 
     @commands.command(help='Jump to a position in the currently playing song', usage='seek [timestamp]', examples=['seek 1m 20s'], clearance='User', cls=command.Command)
     async def seek(self, ctx, *, new_position=None):
@@ -78,7 +105,7 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         if await self.check_voice(ctx):
             return
 
-        correct_format = re.findall(r'((?:\d+h)? ?(?:\d+m)? ?(?:\d+s))', new_position)
+        correct_format = re.findall(r'((?:\d+h)? ?(?:\d+m)? ?(?:\d+s)?)', new_position)
         if not correct_format:
             return await embed_maker.message(ctx, 'Invalid timestamp format', colour='red')
 
@@ -89,6 +116,30 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
             return await embed_maker.message(ctx, 'timestamp further than duration of song', colour='red')
 
         await player.seek(new_position)
+
+        formatted_duration_length = len(format_time.ms(duration, accuracy=3).split(' '))
+        formatted_duration = format_time.ms(duration, accuracy=3, progress_bar=formatted_duration_length)
+
+        # update progress bar
+        part_duration = duration // 25
+        equal_segments = [range(i * part_duration, (i + 1) * part_duration) for i in range(25)]
+
+        player = playlist.wavelink_client.get_player(ctx.guild.id)
+
+        current_position = 5000 * round(player.position / 5000)
+
+        pos_range = [r for r in equal_segments if current_position in r]
+        if not pos_range:
+            return
+
+        position_index = equal_segments.index(pos_range[0])
+        formatted_position = format_time.ms(current_position, accuracy=3, progress_bar=formatted_duration_length)
+
+        line_str = '■' * position_index + '—' * (25 - position_index)
+        progress_bar_str = f'`{formatted_position} [{line_str}] {formatted_duration}`'
+
+        await playlist.update_music_menu(current_progress=progress_bar_str)
+
         return await ctx.message.add_reaction('👍')
 
     @commands.command(help='Change the volume of the bot', usage='volume [0-100]', examples=['volume 70'], clearance='User', cls=command.Command)

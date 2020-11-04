@@ -31,7 +31,6 @@ class SpotifyLink:
         type = 'track' if not type else type[0]
 
         id = re.findall(rf'https://open.spotify.com/{type}/(.*)', url)
-        print(id)
         if not id:
             return None
 

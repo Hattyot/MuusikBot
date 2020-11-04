@@ -285,9 +285,15 @@ class Playlist:
         playlist = [(self.current_song.id, self.current_song.requester, self.current_song.custom_title)] if self.current_song else []
         playlist += [(s.id, s.requester, s.custom_title) for s in self.queue]
 
-        history = [(s.id, s.requester) for s in self.history]
-
+        history = [(s.id, s.requester, s.custom_title) for s in self.history]
+        print(len(playlist))
         db.dj.update_one({'guild_id': self.guild.id}, {'$set': {'playlist': playlist, 'history': history}})
+
+    def add_to_history(self, songs: list):
+        for song in songs:
+            self.history.append(song)
+            if len(self.history) > 20:
+                del self.history[0]
 
     async def next(self):
         previous_song = self.history[-1] if self.history else None
@@ -305,8 +311,8 @@ class Playlist:
             self.queue.append(previous_song)
 
         next_song = self.queue.pop(0)
-        self.update_dj_db()
         self.current_song = next_song
+        self.update_dj_db()
         await self.update_music_menu()
 
         player = self.wavelink_client.get_player(self.guild.id)
@@ -324,6 +330,7 @@ class Playlist:
     async def clear(self):
         self.current_song = None
         self.queue = []
+        self.history = []
         self.update_dj_db()
         await self.update_music_menu()
 
