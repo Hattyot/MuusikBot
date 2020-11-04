@@ -91,10 +91,6 @@ class Playlist:
     async def start_node(self):
         await self.bot.wait_until_ready()
 
-        node = self.wavelink_client.get_node(f'MuusikBot-{self.guild.id}')
-        if node:
-            return
-
         await self.wavelink_client.initiate_node(
             host=f'{config.LAVALINK_HOST}',
             port=2333,
