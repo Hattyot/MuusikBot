@@ -1,5 +1,5 @@
 server: # REST and WS server
-  port: 8080
+  port: 2333
   address: 0.0.0.0
 lavalink:
   server:
@@ -27,7 +27,7 @@ lavalink:
 
 metrics:
   prometheus:
-    enabled: true
+    enabled: false
     endpoint: /metrics
 
 sentry:
