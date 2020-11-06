@@ -14,9 +14,6 @@ PREFIX = '>'
 EMBED_COLOUR = 0x00a6ad
 DEV_IDS = []
 
-# Roles which cant use the bot commands
-NON_DJS = []
-
 # Spotify api
 SPOTIFY_CLIENT_ID = ''
 SPOTIFY_CLIENT_SECRET = ''

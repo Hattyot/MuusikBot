@@ -95,8 +95,7 @@ def get_user_clearance(member):
     if permissions.manage_messages:
         clearance.append('Mod')
 
-    if not (set(config.NON_DJS) & set([r.id for r in member.roles])):
-        clearance.append('User')
+    clearance.append('User')
 
     return clearance
 
