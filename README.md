@@ -1,5 +1,5 @@
 # MuusikBot
-A music bot for discord, specifically for the Lapikud discord server
+A music bot for discord
 ## Install Guide
 ##### 1. Download or clone the bot
 ```
