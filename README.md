@@ -1,5 +1,6 @@
 # MuusikBot
-A music bot for discord with a dedicated music menu that display the current song, its progress and songs in the queue.<br /><br />
+A music bot for discord with a dedicated music menu that display the current song, its progress and songs in the queue.<br />
+It supports youtube, twitch, soundcloud and spotify.<br />
 ![Music Menu](https://cdn.discordapp.com/attachments/762328958276075561/774306742494429194/unknown.png)
 ## Install Guide
 ##### 1. Download or clone the bot
